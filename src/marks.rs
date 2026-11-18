@@ -13,7 +13,8 @@
 //! session seen for it, a fast path that is checked before use. A mark's
 //! position is its 1-based index in the list, so removing one compacts the rest
 //! and no stored number can drift. The first four positions have keys
-//! ([`KEYS`]); the rest are reached from the marks menu.
+//! ([`KEYS`]); the rest are reached from the marks menu, which also moves a mark
+//! to another position.
 //!
 //! The file is strict like a preset: unknown keys, an empty name, or a repeated
 //! name are errors naming it. A missing file is an empty list, and it is
@@ -51,6 +52,9 @@ const LOCK_FILE_NAME: &str = ".marks.lock";
 
 /// The id of the marks menu's "Unmark…" row when no mark is named that.
 const UNMARK_ROW: &str = "unmark";
+
+/// The id of the marks menu's "Move…" row when no mark is named that.
+const MOVE_ROW: &str = "move";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -226,15 +230,17 @@ fn key(index: usize) -> Option<&'static str> {
     KEYS.get(index).copied()
 }
 
-/// The marks menu: a row per mark, then an "Unmark…" row whose id
-/// `unmark_id` is never a mark's name. The Lua bridge passes `title`,
-/// `confirm`, and `items` to `rex.ui.pick` and opens the unmark menu when the
-/// answer is `unmark_id`. No marks means no rows at all.
+/// The marks menu: a row per mark, then a "Move…" row when there are at least
+/// two marks, then an "Unmark…" row whose id `unmark_id` is never a mark's
+/// name. The `move_id` of the "Move…" row is never a mark's name either, nor
+/// `unmark_id`, so the Lua bridge can tell the two apart from a chosen mark and
+/// open `menu move` or `menu unmark`. No marks means no rows at all.
 #[derive(Debug, Serialize)]
 pub struct MarksMenu {
     #[serde(flatten)]
     menu: Menu,
     unmark_id: String,
+    move_id: String,
 }
 
 pub fn menu(marks: &Marks) -> MarksMenu {
@@ -242,8 +248,20 @@ pub fn menu(marks: &Marks) -> MarksMenu {
     while marks.marks.iter().any(|mark| mark.name == unmark_id) {
         unmark_id.push('+');
     }
+    let mut move_id = MOVE_ROW.to_owned();
+    while marks.marks.iter().any(|mark| mark.name == move_id) || move_id == unmark_id {
+        move_id.push('+');
+    }
     let mut items = marks.items();
     if !items.is_empty() {
+        if marks.marks.len() > 1 {
+            items.push(PickItem {
+                id: move_id.clone(),
+                title: "Move…".to_owned(),
+                subtitle: None,
+                icon: ROW_ICON,
+            });
+        }
         items.push(PickItem {
             id: unmark_id.clone(),
             title: "Unmark…".to_owned(),
@@ -254,11 +272,16 @@ pub fn menu(marks: &Marks) -> MarksMenu {
     MarksMenu {
         menu: Menu::new(Mode::Marks, items),
         unmark_id,
+        move_id,
     }
 }
 
 pub fn unmark_menu(marks: &Marks) -> Menu {
     Menu::new(Mode::Unmark, marks.items())
+}
+
+pub fn move_menu(marks: &Marks) -> Menu {
+    Menu::new(Mode::Move, marks.items())
 }
 
 /// What `mark` did, printed as `{"status": …, "name": …, "position": …,
@@ -339,6 +362,78 @@ pub fn unmark(marks: &mut Marks, name: &str) -> Result<Unmarked> {
     Ok(Unmarked::Removed {
         name: mark.name,
         position: index + 1,
+    })
+}
+
+/// What `move` did, printed as one JSON object tagged by `status`.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum Moved {
+    /// Nothing was written. `menu` lists the positions the mark can go to.
+    Choose {
+        name: String,
+        from: usize,
+        menu: Menu,
+    },
+    /// The mark moved to `to`, or was already there and the file untouched.
+    Moved {
+        name: String,
+        from: usize,
+        to: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        key: Option<&'static str>,
+    },
+}
+
+/// Asks where the mark `name` goes: one row per position, its id the position
+/// as a decimal string, its title the position and the key reaching it, and its
+/// subtitle the mark that position holds now.
+///
+/// Nothing is written and the list is read without the lock, since this only
+/// reports what `move --to` would do.
+pub fn choose(marks: &Marks, name: &str) -> Result<Moved> {
+    let from = marks.index_of(name)?;
+    let items = marks
+        .marks
+        .iter()
+        .enumerate()
+        .map(|(index, mark)| PickItem {
+            id: (index + 1).to_string(),
+            title: match key(index) {
+                Some(key) => format!("{} · {key}", index + 1),
+                None => (index + 1).to_string(),
+            },
+            subtitle: Some(safe_label(&mark.name)),
+            icon: ROW_ICON,
+        })
+        .collect();
+    Ok(Moved::Choose {
+        name: name.to_owned(),
+        from: from + 1,
+        menu: Menu::moving(name, items),
+    })
+}
+
+/// Moves the mark `name` to the 1-based `position`, so the marks between shift
+/// by one. A mark already there is reported without writing the file.
+pub fn move_to(marks: &mut Marks, name: &str, position: usize) -> Result<Moved> {
+    let index = marks.index_of(name)?;
+    ensure!(
+        position != 0 && position <= marks.marks.len(),
+        "no position {position} ({} marked)",
+        marks.marks.len()
+    );
+    let from = index + 1;
+    if position != from {
+        let mark = marks.marks.remove(index);
+        marks.marks.insert(position - 1, mark);
+        marks.store()?;
+    }
+    Ok(Moved::Moved {
+        name: name.to_owned(),
+        from,
+        to: position,
+        key: key(position - 1),
     })
 }
 

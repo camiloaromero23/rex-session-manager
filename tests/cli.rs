@@ -1117,8 +1117,9 @@ fn menu_marks_lists_marks_with_their_keys_and_an_unmark_row() {
             r#"{"id":"c","title":"c","subtitle":"e","icon":"code"},"#,
             r#"{"id":"d","title":"d","subtitle":"r","icon":"code"},"#,
             r#"{"id":"e\tf","title":"e?f","icon":"code"},"#,
+            r#"{"id":"move","title":"Move…","icon":"code"},"#,
             r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
-            r#""unmark_id":"unmark"}"#,
+            r#""unmark_id":"unmark","move_id":"move"}"#,
             "\n"
         )
     );
@@ -1135,8 +1136,9 @@ fn menu_marks_never_gives_the_unmark_row_a_marks_id() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
         stdout(&out).ends_with(concat!(
+            r#"{"id":"move","title":"Move…","icon":"code"},"#,
             r#"{"id":"unmark++","title":"Unmark…","icon":"code"}],"#,
-            r#""unmark_id":"unmark++"}"#,
+            r#""unmark_id":"unmark++","move_id":"move"}"#,
             "\n"
         )),
         "{}",
@@ -1153,7 +1155,7 @@ fn menu_marks_is_empty_without_a_marks_file() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(
         stdout(&out),
-        "{\"title\":\"Marks ⚓\",\"confirm\":\"Jump\",\"items\":[],\"unmark_id\":\"unmark\"}\n"
+        "{\"title\":\"Marks ⚓\",\"confirm\":\"Jump\",\"items\":[],\"unmark_id\":\"unmark\",\"move_id\":\"move\"}\n"
     );
     assert_eq!(s.read_marks(), None);
 }
@@ -1510,4 +1512,242 @@ fn concurrent_marks_for_different_sessions_are_all_kept() {
         let expected = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"];
         assert_eq!(names, expected, "round {round}: concurrent marks were lost");
     }
+}
+
+#[test]
+fn menu_marks_shows_no_move_row_for_a_single_mark() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1"))]);
+
+    let out = s.run("{}", &["menu", "marks"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#""unmark_id":"unmark","move_id":"move"}"#,
+            "\n"
+        )
+    );
+    assert_eq!(s.calls(), "");
+}
+
+#[test]
+fn menu_marks_never_gives_the_move_row_a_marks_id() {
+    let s = Sandbox::new();
+    s.marks(&[("move", None), ("z", None)]);
+
+    let out = s.run("{}", &["menu", "marks"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
+            r#"{"id":"move","title":"move","subtitle":"q","icon":"code"},"#,
+            r#"{"id":"z","title":"z","subtitle":"w","icon":"code"},"#,
+            r#"{"id":"move+","title":"Move…","icon":"code"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#""unmark_id":"unmark","move_id":"move+"}"#,
+            "\n"
+        )
+    );
+    assert_eq!(s.calls(), "");
+}
+
+#[test]
+fn menu_move_lists_the_marks_to_move() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1")), ("b", None)]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["menu", "move"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"title":"Move ⚓","confirm":"Choose","items":["#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"}]}"#,
+            "\n"
+        )
+    );
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+    assert_eq!(s.calls(), "", "menu move must not call rex");
+}
+
+#[test]
+fn move_asks_where_the_named_mark_goes_and_writes_nothing() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", None),
+        ("c", None),
+        ("d", None),
+        ("e\tf", None),
+    ]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["move", "--", "b"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"status":"choose","name":"b","from":2,"menu":{"#,
+            r#""title":"Move b to…","confirm":"Move","items":["#,
+            r#"{"id":"1","title":"1 · q","subtitle":"a","icon":"code"},"#,
+            r#"{"id":"2","title":"2 · w","subtitle":"b","icon":"code"},"#,
+            r#"{"id":"3","title":"3 · e","subtitle":"c","icon":"code"},"#,
+            r#"{"id":"4","title":"4 · r","subtitle":"d","icon":"code"},"#,
+            r#"{"id":"5","title":"5","subtitle":"e?f","icon":"code"}]}}"#,
+            "\n"
+        )
+    );
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+    let mut entries: Vec<_> = fs::read_dir(s.path("state"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    entries.sort();
+    assert_eq!(entries, ["marks.json"], "move NAME must create nothing");
+    assert_eq!(s.calls(), "", "move must not call rex");
+}
+
+#[test]
+fn move_to_a_later_position_shifts_the_marks_between_down() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", None),
+        ("c", None),
+        ("d", None),
+    ]);
+
+    let out = s.run("{}", &["move", "--to", "3", "--", "a"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"moved\",\"name\":\"a\",\"from\":1,\"to\":3,\"key\":\"e\"}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[
+            ("b", None),
+            ("c", None),
+            ("a", Some("session:1")),
+            ("d", None)
+        ]))
+    );
+    assert_eq!(s.calls(), "", "move must not call rex");
+
+    // Past the keyed positions there is no key.
+    s.marks(&[
+        ("a", None),
+        ("b", None),
+        ("c", None),
+        ("d", None),
+        ("e", None),
+    ]);
+    let far = s.run("{}", &["move", "--to", "5", "--", "a"]);
+
+    assert_eq!(far.status.code(), Some(0), "{}", stderr(&far));
+    assert_eq!(
+        stdout(&far),
+        "{\"status\":\"moved\",\"name\":\"a\",\"from\":1,\"to\":5}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[
+            ("b", None),
+            ("c", None),
+            ("d", None),
+            ("e", None),
+            ("a", None)
+        ]))
+    );
+}
+
+#[test]
+fn move_to_an_earlier_position_shifts_the_marks_between_up() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", None),
+        ("b", None),
+        ("c", None),
+        ("d", Some("session:4")),
+    ]);
+
+    let out = s.run("{}", &["move", "--to", "2", "--", "d"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"moved\",\"name\":\"d\",\"from\":4,\"to\":2,\"key\":\"w\"}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[
+            ("a", None),
+            ("d", Some("session:4")),
+            ("b", None),
+            ("c", None)
+        ]))
+    );
+    assert_eq!(s.calls(), "", "move must not call rex");
+}
+
+#[test]
+fn move_to_the_position_it_holds_writes_nothing() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", Some("session:2")),
+        ("c", None),
+    ]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["move", "--to", "2", "--", "b"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"moved\",\"name\":\"b\",\"from\":2,\"to\":2,\"key\":\"w\"}\n"
+    );
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+    assert_eq!(s.calls(), "", "move must not call rex");
+}
+
+#[test]
+fn move_refuses_a_position_past_the_list_an_unknown_mark_and_zero() {
+    let s = Sandbox::new();
+    s.marks(&[("a", None), ("b", None), ("c", None)]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["move", "--to", "9", "--", "a"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        stderr(&out),
+        "rex-session-manager: no position 9 (3 marked)\n"
+    );
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+
+    let unknown = s.run("{}", &["move", "--to", "2", "--", "z"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert_eq!(stdout(&unknown), "");
+    assert_eq!(stderr(&unknown), "rex-session-manager: no mark named z\n");
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+
+    let zero = s.run("{}", &["move", "--to", "0", "--", "a"]);
+    assert_eq!(zero.status.code(), Some(2));
+    assert_eq!(stdout(&zero), "");
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+
+    assert_eq!(s.calls(), "", "move must not call rex");
 }

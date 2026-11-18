@@ -107,6 +107,19 @@ enum Command {
     ///
     /// Prints `{"status": "removed", "name": …, "position": …}`.
     Unmark { name: String },
+    /// Move the mark NAME to another position; the marks between shift by one.
+    ///
+    /// Without --to nothing is written: prints `{"status": "choose", "name":
+    /// …, "from": …, "menu": …}`, where `menu` lists the positions to move it
+    /// to. With --to N it prints `{"status": "moved", "name": …, "from":
+    /// …, "to": …, "key": …}`; `key` (q, w, e, r) is left out past position 4,
+    /// and a mark already at N leaves the file untouched.
+    Move {
+        /// The 1-based position to move NAME to.
+        #[arg(long, value_name = "N", value_parser = clap::value_parser!(u64).range(1..))]
+        to: Option<u64>,
+        name: String,
+    },
     /// Go to a mark: its recorded session while it runs, else the session
     /// labelled with its name, else a new session from its preset.
     ///
@@ -164,6 +177,7 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Menu { mode: Mode::Marks } => print_json(&marks::menu(&load_marks()?)),
         Command::Menu { mode: Mode::Unmark } => print_json(&marks::unmark_menu(&load_marks()?)),
+        Command::Menu { mode: Mode::Move } => print_json(&marks::move_menu(&load_marks()?)),
         Command::Menu { mode } => {
             let items = match mode {
                 Mode::Projects | Mode::Delete => {
@@ -172,7 +186,7 @@ fn run(cli: Cli) -> Result<()> {
                 Mode::Active | Mode::Close | Mode::Save => {
                     menu::session_items(&rex.list_sessions()?)
                 }
-                Mode::Marks | Mode::Unmark => unreachable!("handled above"),
+                Mode::Marks | Mode::Unmark | Mode::Move => unreachable!("handled above"),
             };
             print_json(&Menu::new(mode, items))
         }
@@ -217,6 +231,16 @@ fn run(cli: Cli) -> Result<()> {
             )?)
         }
         Command::Unmark { name } => print_json(&marks::unmark(&mut lock_marks()?, &name)?),
+        Command::Move { to, name } => match to {
+            // Moving writes the list, so it holds the lock like every other
+            // change; asking where to move it only reads.
+            Some(position) => print_json(&marks::move_to(
+                &mut lock_marks()?,
+                &name,
+                usize::try_from(position)?,
+            )?),
+            None => print_json(&marks::choose(&load_marks()?, &name)?),
+        },
         Command::JumpMark { position, name } => {
             let selector = match (position, name) {
                 (Some(position), _) => Selector::Position(usize::try_from(position)?),

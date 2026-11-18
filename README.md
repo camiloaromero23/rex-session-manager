@@ -35,7 +35,7 @@ terminals), `rex` on `PATH`, then the Rex server's macOS install location.
 | --- | --- | --- |
 | `menu projects` / `menu delete` | Lists every preset, sorted by name; `menu delete` asks which preset to delete. | `{title, confirm, items}` for `rex.ui.pick` |
 | `menu active` / `menu close` / `menu save` | Lists running sessions; a repeated label shows the session ID as subtitle. | same |
-| `menu marks` / `menu unmark` | Lists the marks in position order, each row showing the key reaching it when it has one (see [Marks](#marks)); `menu marks` ends with an `Unmark…` row, `menu unmark` removes the chosen mark. | `{title, confirm, items, unmark_id}` for `menu marks` (`unmark_id` is that row's id, never a mark's name); `{title, confirm, items}` for `menu unmark` |
+| `menu marks` / `menu unmark` / `menu move` | Lists the marks in position order, each row showing the key reaching it when it has one (see [Marks](#marks)); `menu marks` ends with a `Move…` row once there are 2+ marks and an `Unmark…` row, `menu unmark` removes the chosen mark, and `menu move` chooses the mark to move. | `{title, confirm, items, unmark_id, move_id}` for `menu marks` (`unmark_id` and `move_id` are those rows' ids, never a mark's name); `{title, confirm, items}` for the others |
 | `jump PROJECT` | Reuses the session labelled exactly `PROJECT`, or creates it from the preset in one all-or-nothing `session.create`. Two sessions with that label is an error. | `{session_id, window_id?}` (`window_id` only for a new session) |
 | `kill SESSION_ID` | Destroys that session and every block in it, and removes every mark holding it. The marks file is read first, so a broken one destroys nothing. | nothing |
 | `save SESSION_ID` | Saves the session as a preset named after its label (see [Saving a session](#saving-a-session)). Writes nothing when that preset exists. | `{status, name, path}`; `status` is `created`, or `exists` plus an overwrite `menu` |
@@ -44,6 +44,8 @@ terminals), `rex` on `PATH`, then the Rex server's macOS install location.
 | `delete --confirmed NAME` | Removes the file holding preset `NAME`, and the mark `NAME` if there is one. | `{status, name, path}`; `status` is `deleted` |
 | `mark SESSION_ID` | Marks the session, saving it as a preset first when it has none, under the same rules as `save` (see [Marks](#marks)). A marked preset keeps its position. | `{status, name, position, key, saved}`; `status` is `added` or `updated`, `key` (`q`, `w`, `e`, `r`) only for the first four positions, `saved` says whether a preset was written |
 | `unmark NAME` | Removes the mark `NAME`; the marks after it move up one position. | `{status, name, position}`; `status` is `removed` |
+| `move NAME` | Moves nothing: reports the mark's position and a menu of the positions it can move to (see [Marks](#marks)). | `{status, name, from, menu}`; `status` is `choose` |
+| `move --to N NAME` | Moves the mark `NAME` to position `N`; the marks between shift by one. A mark already at `N` leaves the file untouched. | `{status, name, from, to, key}`; `status` is `moved`, `key` (`q`, `w`, `e`, `r`) only when `N` is one of the first four positions |
 | `jump-mark --position N` / `jump-mark NAME` | Goes to the mark by its 1-based position (the `q`, `w`, `e`, `r` keys) or by name (the menu). | `{session_id, window_id?}` like `jump` |
 
 `--sessions-dir DIR` (or `REX_SESSIONS_DIR`) picks the preset directory;
@@ -127,8 +129,15 @@ A short ordered list of presets, each one chord away. One file holds them all,
   `mark NAME has no running session and no preset; unmark it`.
 - `menu marks` ends with an `Unmark…` row whose id is `unmark_id`, never a mark's
   name, so the bridge can tell it from a chosen mark and open `menu unmark`; a
-  mark called `unmark` only pushes that id to `unmark+`. No marks means no
-  rows.
+  mark called `unmark` only pushes that id to `unmark+`. With 2+ marks a `Move…`
+  row comes just before it, under the same rule for its id `move_id`, and opens
+  `menu move`. No marks means no rows.
+- `move --to N NAME` removes the mark and reinserts it at position `N`, so the
+  marks between shift by one; a mark already at `N` leaves the file untouched.
+  `move NAME` writes nothing: it prints the target positions as rows, each
+  titled with the position and the key that reaches it. A position past the
+  last mark is an error (`no position N (L marked)`), and `N = 0` is a command
+  line error.
 - The file is strict like a preset: an unknown key, an empty name, a repeated
   name, and a non-object are errors naming the file. A missing file is an empty
   list, never an error, and the list is written in one rename.
@@ -149,7 +158,7 @@ A short ordered list of presets, each one chord away. One file holds them all,
 | `session.rs` | `jump` and the `session.create` request. |
 | `save.rs` | `save`: reading a session's tabs into a preset. |
 | `delete.rs` | `delete`: finding a preset's file and removing it on confirmation. |
-| `marks.rs` | Marks: the `marks.json` store, `mark`/`unmark`, and `jump-mark`. |
+| `marks.rs` | Marks: the `marks.json` store, `mark`/`unmark`, `move`, and `jump-mark`. |
 | `rex.rs` | `RexApi` and `SessionReader` traits and their `rex api call` implementation. |
 
 `session.rs` depends on the `RexApi` trait, so its tests use an in-memory fake.

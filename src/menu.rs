@@ -31,6 +31,8 @@ pub enum Mode {
     Marks,
     /// Every mark, in position order; choosing one unmarks it.
     Unmark,
+    /// Every mark, in position order; choosing one picks where to move it.
+    Move,
 }
 
 impl Mode {
@@ -43,6 +45,7 @@ impl Mode {
             Self::Delete => "Delete Preset 🗑",
             Self::Marks => "Marks ⚓",
             Self::Unmark => "Unmark ⚓",
+            Self::Move => "Move ⚓",
         }
     }
 
@@ -57,6 +60,7 @@ impl Mode {
             Self::Delete => "Delete Preset",
             Self::Marks => "Jump",
             Self::Unmark => "Unmark",
+            Self::Move => "Choose",
         }
     }
 }
@@ -96,6 +100,16 @@ impl Menu {
     /// Asks whether to delete the preset `name` stored at `path`.
     pub fn delete(name: &str, path: &Path) -> Self {
         Self::confirming("Delete", DELETE, name, path)
+    }
+
+    /// Asks where the mark `name` goes: one row per position, in the order
+    /// `items` lists them.
+    pub fn moving(name: &str, items: Vec<PickItem>) -> Self {
+        Self {
+            title: Cow::Owned(format!("Move {} to…", safe_label(name))),
+            confirm: "Move",
+            items,
+        }
     }
 
     /// A menu asking whether to `action` the preset `name` stored at `path`.
