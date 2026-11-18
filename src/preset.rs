@@ -131,7 +131,9 @@ pub fn find(directory: &Path, name: &str) -> Result<Option<PathBuf>> {
 }
 
 /// Writes `text` to `path`, which must not exist yet, creating the directory
-/// if needed. An existing file, preset or not, is never replaced.
+/// if needed. An existing file, preset or not, is never replaced; a preset
+/// already at `path` is named in the error, since a label whose file name
+/// clashes with it needs renaming.
 pub fn create(path: &Path, text: &str) -> Result<()> {
     let directory = parent(path)?;
     fs::create_dir_all(directory)
@@ -142,11 +144,24 @@ pub fn create(path: &Path, text: &str) -> Result<()> {
     let _ = fs::remove_file(&temporary);
     match linked {
         Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            bail!("cannot create {}: the file already exists", path.display())
-        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => match held_preset(path) {
+            Some(name) => bail!(
+                "cannot create {}: it already holds preset {name:?}; rename the session or that preset",
+                path.display()
+            ),
+            None => bail!("cannot create {}: the file already exists", path.display()),
+        },
         Err(error) => Err(error).with_context(|| format!("cannot create {}", path.display())),
     }
+}
+
+/// The name of the preset the file at `path` holds, if it holds one.
+///
+/// The file is read at the moment of the clash, so a file that raced into place
+/// or was not a preset falls back to the generic error.
+fn held_preset(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    Preset::parse(&text).ok().map(|preset| preset.name)
 }
 
 /// Replaces the file at `path` with `text` in one rename.
@@ -350,5 +365,47 @@ mod tests {
     fn rejects_an_empty_directory() {
         let dir = tempfile::tempdir().unwrap();
         assert!(error_of(load(dir.path())).starts_with("no project session files in "));
+    }
+
+    #[test]
+    fn creating_names_the_preset_already_holding_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web-app.json");
+        let held = r#"{"name": "web app", "tabs": [{"cwd": "/"}]}"#;
+        fs::write(&path, held).unwrap();
+
+        let error = error_of(create(
+            &path,
+            r#"{"name": "web-app", "tabs": [{"cwd": "/"}]}"#,
+        ));
+
+        assert_eq!(
+            error,
+            format!(
+                r#"cannot create {}: it already holds preset "web app"; rename the session or that preset"#,
+                path.display()
+            )
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), held);
+        let mut names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["web-app.json"], "no temporary file is left");
+    }
+
+    #[test]
+    fn creating_keeps_the_generic_error_for_a_file_that_is_not_a_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("web-app.json");
+        fs::write(&path, "not a preset").unwrap();
+
+        let error = error_of(create(&path, r#"{"name": "x", "tabs": [{"cwd": "/"}]}"#));
+
+        assert_eq!(
+            error,
+            format!("cannot create {}: the file already exists", path.display())
+        );
     }
 }

@@ -502,7 +502,7 @@ fn save_never_clobbers_another_preset_holding_the_file_name() {
         assert_eq!(
             stderr(&out),
             format!(
-                "rex-session-manager: cannot create {}: the file already exists\n",
+                "rex-session-manager: cannot create {}: it already holds preset \"other\"; rename the session or that preset\n",
                 s.sessions_file("web-app.json").display()
             )
         );

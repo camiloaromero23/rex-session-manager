@@ -81,6 +81,8 @@ One JSON file per project, read on every call:
 - A new preset goes to `<name>.json` (characters other than letters, digits,
   `-`, `_`, `.` become `-`) and never replaces an existing file. An overwrite
   replaces the preset's current file in one rename, whatever its file name.
+  When another preset already holds the new file name (`web app` and
+  `web-app`), the error names it so either label can be renamed.
 
 The Lua bridge asks before overwriting: `save` prints `status: "exists"` with
 a ready `rex.ui.pick` menu (`overwrite` / `cancel`), and choosing `overwrite`
