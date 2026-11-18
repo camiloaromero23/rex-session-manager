@@ -1305,3 +1305,55 @@ fn jump_mark_refuses_a_position_with_no_mark() {
     assert_eq!(unknown.status.code(), Some(1));
     assert_eq!(stderr(&unknown), "rex-session-manager: no mark named z\n");
 }
+
+#[test]
+fn kill_removes_every_mark_of_the_killed_session() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1")), ("b", Some("session:2"))]);
+
+    let out = s.run("{}", &["kill", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(s.read_marks(), Some(owned(&[("b", Some("session:2"))])));
+    assert_eq!(
+        s.calls(),
+        "api call session.destroy {\"session_id\":\"session:1\"}\n"
+    );
+}
+
+#[test]
+fn kill_destroys_nothing_while_the_marks_file_is_broken() {
+    let s = Sandbox::new();
+    fs::create_dir_all(s.path("state")).unwrap();
+    fs::write(s.marks_file(), "not json").unwrap();
+
+    let out = s.run("{}", &["kill", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains(&s.marks_file().display().to_string()),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(s.calls(), "", "kill must not destroy a session it cannot unmark");
+}
+
+#[test]
+fn delete_confirmed_removes_the_presets_mark() {
+    let s = Sandbox::new();
+    s.preset("d.json", r#"{"name":"dotfiles","tabs":[{"cwd":"/d"}]}"#);
+    s.preset("n.json", r#"{"name":"notes","tabs":[{"cwd":"/n"}]}"#);
+    s.marks(&[("notes", Some("session:1")), ("dotfiles", Some("session:2"))]);
+
+    let out = s.run("{}", &["delete", "--confirmed", "--", "dotfiles"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let path = s.sessions_file("d.json").display().to_string();
+    assert_eq!(
+        stdout(&out),
+        format!("{{\"status\":\"deleted\",\"name\":\"dotfiles\",\"path\":\"{path}\"}}\n")
+    );
+    assert_eq!(s.read_marks(), Some(owned(&[("notes", Some("session:1"))])));
+    assert_eq!(s.calls(), "", "delete must not call rex");
+}

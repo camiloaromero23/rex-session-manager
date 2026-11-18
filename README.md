@@ -37,11 +37,11 @@ terminals), `rex` on `PATH`, then the Rex server's macOS install location.
 | `menu active` / `menu close` / `menu save` | Lists running sessions; a repeated label shows the session ID as subtitle. | same |
 | `menu marks` / `menu unmark` | Lists the marks in position order, each row showing the key reaching it when it has one (see [Marks](#marks)); `menu marks` ends with an `Unmark…` row, `menu unmark` removes the chosen mark. | `{title, confirm, items, unmark_id}` for `menu marks` (`unmark_id` is that row's id, never a mark's name); `{title, confirm, items}` for `menu unmark` |
 | `jump PROJECT` | Reuses the session labelled exactly `PROJECT`, or creates it from the preset in one all-or-nothing `session.create`. Two sessions with that label is an error. | `{session_id, window_id?}` (`window_id` only for a new session) |
-| `kill SESSION_ID` | Destroys that session and every block in it. | nothing |
+| `kill SESSION_ID` | Destroys that session and every block in it, and removes every mark holding it. The marks file is read first, so a broken one destroys nothing. | nothing |
 | `save SESSION_ID` | Saves the session as a preset named after its label (see [Saving a session](#saving-a-session)). Writes nothing when that preset exists. | `{status, name, path}`; `status` is `created`, or `exists` plus an overwrite `menu` |
 | `save --overwrite NAME SESSION_ID` | Replaces the existing preset `NAME` in its own file. Refused if the session is no longer labelled `NAME`. | `{status, name, path}`; `status` is `overwritten`, or `created` when no preset exists |
 | `delete NAME` | Removes nothing: reports the file holding preset `NAME`, whatever its file is called, with a menu asking whether to delete it. Running sessions are never touched. | `{status, name, path, menu}`; `status` is `confirm` |
-| `delete --confirmed NAME` | Removes the file holding preset `NAME`. | `{status, name, path}`; `status` is `deleted` |
+| `delete --confirmed NAME` | Removes the file holding preset `NAME`, and the mark `NAME` if there is one. | `{status, name, path}`; `status` is `deleted` |
 | `mark SESSION_ID` | Marks the session, saving it as a preset first when it has none, under the same rules as `save` (see [Marks](#marks)). A marked preset keeps its position. | `{status, name, position, key, saved}`; `status` is `added` or `updated`, `key` (`q`, `w`, `e`, `r`) only for the first four positions, `saved` says whether a preset was written |
 | `unmark NAME` | Removes the mark `NAME`; the marks after it move up one position. | `{status, name, position}`; `status` is `removed` |
 | `jump-mark --position N` / `jump-mark NAME` | Goes to the mark by its 1-based position (the `q`, `w`, `e`, `r` keys) or by name (the menu). | `{session_id, window_id?}` like `jump` |
@@ -132,6 +132,9 @@ A short ordered list of presets, each one chord away. One file holds them all,
 - The file is strict like a preset: an unknown key, an empty name, a repeated
   name, and a non-object are errors naming the file. A missing file is an empty
   list, never an error, and the list is written in one rename.
+- Known limit: a session closed by Rex itself (`session.close`, `Prefix+Shift+D`)
+  never reaches the binary, so its mark stays; `jump-mark` then recreates the
+  session from the preset.
 
 ## Layout
 

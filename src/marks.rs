@@ -137,6 +137,26 @@ impl Marks {
             })
             .collect()
     }
+
+    /// Removes every mark holding `session_id`, storing the list when it
+    /// changed.
+    pub fn forget_session(&mut self, session_id: &str) -> Result<()> {
+        let before = self.marks.len();
+        self.marks
+            .retain(|mark| mark.session_id.as_deref() != Some(session_id));
+        self.store_if(self.marks.len() != before)
+    }
+
+    /// Removes the mark `name`, if any, storing the list when it changed.
+    pub fn forget_name(&mut self, name: &str) -> Result<()> {
+        let before = self.marks.len();
+        self.marks.retain(|mark| mark.name != name);
+        self.store_if(self.marks.len() != before)
+    }
+
+    fn store_if(&self, changed: bool) -> Result<()> {
+        if changed { self.store() } else { Ok(()) }
+    }
 }
 
 fn parse(text: &str) -> Result<Vec<Mark>> {

@@ -62,6 +62,9 @@ enum Command {
     /// caller.
     Jump { project: String },
     /// Destroy the running session SESSION_ID and every block in it.
+    ///
+    /// Every mark holding that session is removed. The marks file is read
+    /// first, so a broken one destroys nothing.
     Kill { session_id: String },
     /// Save the running session SESSION_ID as a preset named after its label.
     ///
@@ -169,7 +172,11 @@ fn run(cli: Cli) -> Result<()> {
             let presets = preset::load(&sessions_dir()?)?;
             print_json(&session::jump(&rex, &presets, &project)?)
         }
-        Command::Kill { session_id } => rex.destroy_session(&session_id),
+        Command::Kill { session_id } => {
+            let mut marks = load_marks()?;
+            rex.destroy_session(&session_id)?;
+            marks.forget_session(&session_id)
+        }
         Command::Save {
             overwrite,
             session_id,
@@ -182,7 +189,13 @@ fn run(cli: Cli) -> Result<()> {
             command_line,
         )?),
         Command::Delete { confirmed, name } => {
-            print_json(&delete::delete(&sessions_dir()?, &name, confirmed)?)
+            // Read first when confirmed, so a broken marks file deletes nothing.
+            let mut marks = confirmed.then(load_marks).transpose()?;
+            let deleted = delete::delete(&sessions_dir()?, &name, confirmed)?;
+            if let Some(marks) = &mut marks {
+                marks.forget_name(&name)?;
+            }
+            print_json(&deleted)
         }
         Command::Mark { session_id } => {
             let mut marks = load_marks()?;
