@@ -1,0 +1,264 @@
+//! Project presets: one JSON file per project in the sessions directory.
+//!
+//! ```json
+//! {
+//!   "name": "dotfiles",
+//!   "tabs": [
+//!     { "cwd": "~/dotfiles", "run": "nvim" },
+//!     { "cwd": "~/dotfiles" }
+//!   ]
+//! }
+//! ```
+//!
+//! `name` is required and unique across files; the file name is only for
+//! humans. `tabs` is non-empty; each tab needs a `cwd` and may name a program to
+//! `run`. Unknown keys are rejected, so a typo such as `command` for `run` fails
+//! loudly instead of being ignored. The directory is read on every call, so a
+//! preset change takes effect on the next menu or jump.
+
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, Result, bail, ensure};
+use serde::Deserialize;
+
+/// Presets keyed by project name, sorted by name.
+pub type Presets = BTreeMap<String, Preset>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preset {
+    pub name: String,
+    pub tabs: Vec<Tab>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tab {
+    pub cwd: String,
+    #[serde(default)]
+    pub run: Option<String>,
+}
+
+impl Preset {
+    /// Parses and validates one preset file's contents.
+    pub fn parse(text: &str) -> Result<Self> {
+        // Serde would also accept a positional array for a struct; a preset is
+        // only ever an object.
+        let value: serde_json::Value = serde_json::from_str(text)?;
+        ensure!(value.is_object(), "the file must contain a JSON object");
+        let preset: Self = serde_json::from_value(value)?;
+        preset.validate()?;
+        Ok(preset)
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(!self.name.is_empty(), r#"needs a non-empty string "name""#);
+        ensure!(!self.tabs.is_empty(), "needs at least one tab");
+        for (index, tab) in self.tabs.iter().enumerate() {
+            let number = index + 1;
+            ensure!(
+                !tab.cwd.is_empty(),
+                r#"tab {number} needs a non-empty string "cwd""#
+            );
+            ensure!(
+                tab.run.as_deref() != Some(""),
+                r#"tab {number} has a "run" that is not a non-empty string"#
+            );
+        }
+        Ok(())
+    }
+}
+
+/// `$XDG_CONFIG_HOME/rex/sessions`, or `$HOME/.config/rex/sessions`.
+pub fn default_directory() -> Result<PathBuf> {
+    let config = match env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        Some(config) => PathBuf::from(config),
+        None => env::home_dir()
+            .context("cannot locate the home directory for the sessions directory")?
+            .join(".config"),
+    };
+    Ok(config.join("rex").join("sessions"))
+}
+
+/// Loads every `*.json` preset in `directory`, in file-name order.
+///
+/// The extension match ignores case and hidden files are skipped. Any broken
+/// preset, or two presets sharing a name, is an error naming the file: a preset
+/// never disappears silently.
+pub fn load(directory: &Path) -> Result<Presets> {
+    let mut files = Vec::new();
+    for entry in
+        fs::read_dir(directory).with_context(|| format!("cannot list {}", directory.display()))?
+    {
+        let path = entry
+            .with_context(|| format!("cannot list {}", directory.display()))?
+            .path();
+        if is_preset_file(&path) {
+            files.push(path);
+        }
+    }
+    files.sort();
+    ensure!(
+        !files.is_empty(),
+        "no project session files in {}",
+        directory.display()
+    );
+
+    let mut presets = Presets::new();
+    let mut sources: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for path in files {
+        let text =
+            fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
+        let preset = Preset::parse(&text).with_context(|| path.display().to_string())?;
+        if let Some(first) = sources.get(&preset.name) {
+            bail!(
+                "duplicate project {:?} in {} and {}",
+                preset.name,
+                first.display(),
+                path.display()
+            );
+        }
+        sources.insert(preset.name.clone(), path);
+        presets.insert(preset.name.clone(), preset);
+    }
+    Ok(presets)
+}
+
+fn is_preset_file(path: &Path) -> bool {
+    let hidden = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_none_or(|name| name.starts_with('.'));
+    let json = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"));
+    !hidden && json
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn error_of(result: Result<impl std::fmt::Debug>) -> String {
+        format!("{:#}", result.unwrap_err())
+    }
+
+    #[test]
+    fn parses_a_preset_with_optional_run() {
+        let preset = Preset::parse(
+            r#"{"name": "dotfiles", "tabs": [{"cwd": "~/dotfiles", "run": "nvim"}, {"cwd": "~/dotfiles"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.name, "dotfiles");
+        assert_eq!(preset.tabs[0].run.as_deref(), Some("nvim"));
+        assert_eq!(preset.tabs[1].run, None);
+    }
+
+    #[test]
+    fn rejects_invalid_presets() {
+        let cases = [
+            (r#"{"tabs": [{"cwd": "/"}]}"#, "missing field `name`"),
+            (
+                r#"{"name": "", "tabs": [{"cwd": "/"}]}"#,
+                r#"needs a non-empty string "name""#,
+            ),
+            (r#"{"name": "x", "tabs": []}"#, "needs at least one tab"),
+            (
+                r#"{"name": "x", "tabs": {}}"#,
+                "invalid type: map, expected a sequence",
+            ),
+            (
+                r#"{"name": "x", "tabs": [{"cwd": ""}]}"#,
+                r#"tab 1 needs a non-empty string "cwd""#,
+            ),
+            (
+                r#"{"name": "x", "tabs": [{"cwd": "/"}, {"cwd": "/", "run": ""}]}"#,
+                r#"tab 2 has a "run" that is not a non-empty string"#,
+            ),
+            (
+                r#"{"name": "x", "tabs": [{"cwd": "/", "command": "nvim"}]}"#,
+                "unknown field `command`",
+            ),
+            (
+                r#"{"name": "x", "dir": "/", "tabs": [{"cwd": "/"}]}"#,
+                "unknown field `dir`",
+            ),
+            (
+                r#"["x", [{"cwd": "/"}]]"#,
+                "the file must contain a JSON object",
+            ),
+            ("{", "EOF while parsing"),
+        ];
+
+        for (text, expected) in cases {
+            let error = error_of(Preset::parse(text));
+            assert!(error.contains(expected), "{text}: {error}");
+        }
+    }
+
+    #[test]
+    fn loads_json_files_sorted_and_skips_others() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("b.json"),
+            r#"{"name": "zeta", "tabs": [{"cwd": "/"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("A.JSON"),
+            r#"{"name": "alpha", "tabs": [{"cwd": "/"}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join(".hidden.json"), "not json").unwrap();
+        fs::write(dir.path().join("README.md"), "not json").unwrap();
+
+        let presets = load(dir.path()).unwrap();
+
+        assert_eq!(presets.keys().collect::<Vec<_>>(), ["alpha", "zeta"]);
+    }
+
+    #[test]
+    fn names_the_file_of_a_broken_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("bad.json"), r#"{"name": ""}"#).unwrap();
+
+        let error = error_of(load(dir.path()));
+
+        assert!(
+            error.starts_with(&dir.path().join("bad.json").display().to_string()),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_names() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in ["one.json", "two.json"] {
+            fs::write(
+                dir.path().join(file),
+                r#"{"name": "same", "tabs": [{"cwd": "/"}]}"#,
+            )
+            .unwrap();
+        }
+
+        let error = error_of(load(dir.path()));
+
+        assert!(
+            error.starts_with(r#"duplicate project "same" in "#),
+            "{error}"
+        );
+        assert!(error.ends_with("two.json"), "{error}");
+    }
+
+    #[test]
+    fn rejects_an_empty_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(error_of(load(dir.path())).starts_with("no project session files in "));
+    }
+}
