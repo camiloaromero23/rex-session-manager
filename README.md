@@ -169,3 +169,8 @@ A short ordered list of presets, each one chord away. One file holds them all,
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.

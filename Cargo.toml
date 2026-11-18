@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 description = "Project session manager for the Rex terminal multiplexer"
 readme = "README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/camiloaromero23/rex-session-manager"
+homepage = "https://github.com/camiloaromero23/rex-session-manager"
+keywords = ["rex", "terminal", "multiplexer", "sessions"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1"
