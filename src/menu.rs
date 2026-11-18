@@ -13,7 +13,7 @@ use crate::{preset::Presets, rex::Session};
 
 /// Every row of every menu uses this icon; change it here to restyle all of
 /// them.
-const ROW_ICON: &str = "code";
+pub const ROW_ICON: &str = "code";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -27,6 +27,10 @@ pub enum Mode {
     Save,
     /// Every project preset; choosing one asks to delete it.
     Delete,
+    /// Every mark, in position order; choosing one jumps to it.
+    Marks,
+    /// Every mark, in position order; choosing one unmarks it.
+    Unmark,
 }
 
 impl Mode {
@@ -37,6 +41,8 @@ impl Mode {
             Self::Close => "Kill Session 💀",
             Self::Save => "Save Session 💾",
             Self::Delete => "Delete Preset 🗑",
+            Self::Marks => "Marks ⚓",
+            Self::Unmark => "Unmark ⚓",
         }
     }
 
@@ -49,6 +55,8 @@ impl Mode {
             Self::Close => "Close Session",
             Self::Save => "Save Preset",
             Self::Delete => "Delete Preset",
+            Self::Marks => "Jump",
+            Self::Unmark => "Unmark",
         }
     }
 }
@@ -165,7 +173,7 @@ pub fn session_items(sessions: &[Session]) -> Vec<PickItem> {
 }
 
 /// Replaces control characters, which would corrupt a palette row, with `?`.
-fn safe_label(label: &str) -> String {
+pub fn safe_label(label: &str) -> String {
     label
         .chars()
         .map(|c| if c.is_control() { '?' } else { c })

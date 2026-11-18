@@ -67,6 +67,8 @@ impl Sandbox {
         Command::new(env!("CARGO_BIN_EXE_rex-session-manager"))
             .arg("--sessions-dir")
             .arg(self.path("sessions"))
+            .arg("--marks-dir")
+            .arg(self.path("state"))
             .args(args)
             .env("REX_BIN", &rex)
             .env("HOME", self.path("home"))
@@ -76,6 +78,35 @@ impl Sandbox {
 
     fn calls(&self) -> String {
         fs::read_to_string(self.path("rex.log")).unwrap()
+    }
+
+    fn marks_file(&self) -> PathBuf {
+        self.path("state").join("marks.json")
+    }
+
+    /// Writes `marks` as the marks file: `(name, session_id)` pairs in order.
+    fn marks(&self, marks: &[(&str, Option<&str>)]) {
+        fs::create_dir_all(self.path("state")).unwrap();
+        fs::write(self.marks_file(), marks_json(marks)).unwrap();
+    }
+
+    /// The marks file as `(name, session_id)` pairs; `None` when it is absent.
+    fn read_marks(&self) -> Option<Vec<(String, Option<String>)>> {
+        let text = fs::read_to_string(self.marks_file()).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        Some(
+            value["marks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|mark| {
+                    (
+                        mark["name"].as_str().unwrap().to_owned(),
+                        mark["session_id"].as_str().map(str::to_owned),
+                    )
+                })
+                .collect(),
+        )
     }
 
     fn sessions_file(&self, file: &str) -> PathBuf {
@@ -91,6 +122,24 @@ impl Sandbox {
         names.sort();
         names
     }
+}
+
+fn marks_json(marks: &[(&str, Option<&str>)]) -> String {
+    let marks: Vec<_> = marks
+        .iter()
+        .map(|(name, id)| match id {
+            Some(id) => serde_json::json!({"name": name, "session_id": id}),
+            None => serde_json::json!({"name": name}),
+        })
+        .collect();
+    serde_json::json!({ "marks": marks }).to_string()
+}
+
+fn owned(marks: &[(&str, Option<&str>)]) -> Vec<(String, Option<String>)> {
+    marks
+        .iter()
+        .map(|(name, id)| ((*name).to_owned(), id.map(str::to_owned)))
+        .collect()
 }
 
 fn stdout(output: &Output) -> &str {
@@ -258,6 +307,7 @@ fn kill_destroys_only_the_chosen_id() {
         s.calls(),
         "api call session.destroy {\"session_id\":\"--weird id\"}\n"
     );
+    assert_eq!(s.read_marks(), None, "kill must not create a marks file");
 }
 
 #[test]
@@ -698,6 +748,7 @@ fn delete_confirmed_removes_only_that_preset() {
     );
     assert_eq!(s.sessions_listing(), ["notes.json"]);
     assert_eq!(s.calls(), "", "delete must not call rex");
+    assert_eq!(s.read_marks(), None, "delete must not create a marks file");
 }
 
 #[test]
@@ -851,6 +902,7 @@ fn rex_failure_is_reported_with_one_prefix() {
         .args(["kill", "--", "session:1"])
         .env("REX_BIN", &rex)
         .env("HOME", s.path("home"))
+        .env("REX_MARKS_DIR", s.path("state"))
         .output()
         .unwrap();
 
@@ -860,4 +912,396 @@ fn rex_failure_is_reported_with_one_prefix() {
         stderr(&out),
         "rex-session-manager: session.destroy failed (exit status: 7): boom: nope\n"
     );
+}
+
+// ---- marks ----
+
+const WEB_APP_PRESET: &str = r#"{"name":"web app","tabs":[{"cwd":"/w"}]}"#;
+
+const VIEW_CALL: &str = "api call session.view {\"session_id\":\"session:1\"}\n";
+
+#[test]
+fn mark_saves_a_session_without_a_preset_and_appends_it() {
+    let s = Sandbox::new();
+    s.preset("d.json", r#"{"name":"dotfiles","tabs":[{"cwd":"/d"}]}"#);
+    s.marks(&[("dotfiles", Some("session:0"))]);
+    reply_three_tabs(&s, "web app");
+
+    let out = s.run("{}", &["mark", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"added\",\"name\":\"web app\",\"position\":2,\"key\":\"w\",\"saved\":true}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(s.sessions_file("web-app.json")).unwrap(),
+        SAVED_WEB_APP
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[
+            ("dotfiles", Some("session:0")),
+            ("web app", Some("session:1"))
+        ]))
+    );
+    assert_eq!(s.calls(), ALL_SAVE_CALLS);
+}
+
+#[test]
+fn mark_creates_the_marks_file_for_a_session_with_a_preset() {
+    let s = Sandbox::new();
+    s.preset("w.json", WEB_APP_PRESET);
+    reply_three_tabs(&s, "web app");
+
+    let out = s.run("{}", &["mark", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"added\",\"name\":\"web app\",\"position\":1,\"key\":\"q\",\"saved\":false}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(s.marks_file()).unwrap(),
+        "{\n  \"marks\": [\n    {\n      \"name\": \"web app\",\n      \"session_id\": \"session:1\"\n    }\n  ]\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(s.sessions_file("w.json")).unwrap(),
+        WEB_APP_PRESET
+    );
+    assert_eq!(s.sessions_listing(), ["w.json"]);
+    assert_eq!(s.calls(), VIEW_CALL);
+}
+
+#[test]
+fn mark_of_a_marked_preset_updates_its_session_in_place() {
+    let s = Sandbox::new();
+    s.preset("w.json", WEB_APP_PRESET);
+    s.marks(&[("web app", Some("session:old")), ("notes", None)]);
+    reply_three_tabs(&s, "web app");
+
+    let out = s.run("{}", &["mark", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"updated\",\"name\":\"web app\",\"position\":1,\"key\":\"q\",\"saved\":false}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[("web app", Some("session:1")), ("notes", None)]))
+    );
+}
+
+#[test]
+fn mark_refuses_an_unlabelled_session_and_writes_nothing() {
+    let s = Sandbox::new();
+    reply_three_tabs(&s, "");
+
+    let out = s.run("{}", &["mark", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        stderr(&out),
+        "rex-session-manager: session session:1 has no label; name it before saving\n"
+    );
+    assert_eq!(s.read_marks(), None);
+    assert!(s.sessions_listing().is_empty());
+}
+
+#[test]
+fn a_broken_marks_file_is_an_error_naming_it_and_nothing_runs() {
+    let cases = [
+        (r#"{"marks":[{"name":"a","slot":1}]}"#, "unknown field `slot`"),
+        (r#"{"marks":[{"name":"a"},{"name":"a"}]}"#, r#"duplicate mark "a""#),
+        (r#"{"marks":[{"name":""}]}"#, r#"needs a non-empty string "name""#),
+        ("[]", "must contain a JSON object"),
+    ];
+    for (text, expected) in cases {
+        let s = Sandbox::new();
+        fs::create_dir_all(s.path("state")).unwrap();
+        fs::write(s.marks_file(), text).unwrap();
+        reply_three_tabs(&s, "web app");
+
+        let out = s.run("{}", &["mark", "--", "session:1"]);
+
+        assert_eq!(out.status.code(), Some(1), "{text}");
+        assert_eq!(stdout(&out), "", "{text}");
+        let error = stderr(&out);
+        assert!(error.starts_with("rex-session-manager: "), "{error}");
+        assert!(error.contains(&s.marks_file().display().to_string()), "{error}");
+        assert!(error.contains(expected), "{error}");
+        assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), text);
+        assert!(s.sessions_listing().is_empty(), "{text}");
+        assert_eq!(s.calls(), "", "{text}");
+    }
+}
+
+#[test]
+fn marks_default_to_the_xdg_state_directory_then_home() {
+    let s = Sandbox::new();
+    // Creates the fake `rex`.
+    s.run("{}", &["menu", "marks"]);
+    let run = |xdg: Option<PathBuf>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_rex-session-manager"));
+        command
+            .args(["menu", "marks"])
+            .env("REX_BIN", s.path("rex"))
+            .env("HOME", s.path("home"))
+            .env_remove("REX_MARKS_DIR")
+            .env_remove("XDG_STATE_HOME");
+        if let Some(xdg) = xdg {
+            command.env("XDG_STATE_HOME", xdg);
+        }
+        command.output().unwrap()
+    };
+
+    for (xdg, file) in [
+        (
+            Some(s.path("xdg")),
+            s.path("xdg/rex-session-manager/marks.json"),
+        ),
+        (
+            None,
+            s.path("home/.local/state/rex-session-manager/marks.json"),
+        ),
+    ] {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, marks_json(&[("web app", None)])).unwrap();
+
+        let out = run(xdg);
+
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert!(
+            stdout(&out).contains(r#"{"id":"web app","#),
+            "{}",
+            stdout(&out)
+        );
+        fs::remove_file(&file).unwrap();
+    }
+}
+
+#[test]
+fn menu_marks_lists_marks_with_their_keys_and_an_unmark_row() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", None),
+        ("c", None),
+        ("d", None),
+        ("e\tf", None),
+    ]);
+
+    let out = s.run("{}", &["menu", "marks"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"},"#,
+            r#"{"id":"c","title":"c","subtitle":"e","icon":"code"},"#,
+            r#"{"id":"d","title":"d","subtitle":"r","icon":"code"},"#,
+            r#"{"id":"e\tf","title":"e?f","icon":"code"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#""unmark_id":"unmark"}"#,
+            "\n"
+        )
+    );
+    assert_eq!(s.calls(), "", "menu marks must not call rex");
+}
+
+#[test]
+fn menu_marks_never_gives_the_unmark_row_a_marks_id() {
+    let s = Sandbox::new();
+    s.marks(&[("unmark", None), ("unmark+", None)]);
+
+    let out = s.run("{}", &["menu", "marks"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).ends_with(concat!(
+            r#"{"id":"unmark++","title":"Unmark…","icon":"code"}],"#,
+            r#""unmark_id":"unmark++"}"#,
+            "\n"
+        )),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn menu_marks_is_empty_without_a_marks_file() {
+    let s = Sandbox::new();
+
+    let out = s.run("{}", &["menu", "marks"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"title\":\"Marks ⚓\",\"confirm\":\"Jump\",\"items\":[],\"unmark_id\":\"unmark\"}\n"
+    );
+    assert_eq!(s.read_marks(), None);
+}
+
+#[test]
+fn menu_unmark_lists_the_marks_to_remove() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1")), ("b", None)]);
+
+    let out = s.run("{}", &["menu", "unmark"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        concat!(
+            r#"{"title":"Unmark ⚓","confirm":"Unmark","items":["#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"}]}"#,
+            "\n"
+        )
+    );
+}
+
+#[test]
+fn unmark_removes_a_mark_and_compacts_the_positions() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1")), ("b", Some("session:2")), ("c", None)]);
+
+    let out = s.run("{}", &["unmark", "--", "b"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"status\":\"removed\",\"name\":\"b\",\"position\":2}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[("a", Some("session:1")), ("c", None)]))
+    );
+    assert_eq!(s.calls(), "", "unmark must not call rex");
+
+    // `c` moved from the third position to the second.
+    let menu = s.run("{}", &["menu", "unmark"]);
+    assert!(stdout(&menu).contains(r#"{"id":"c","title":"c","subtitle":"w","icon":"code"}"#));
+}
+
+#[test]
+fn unmark_refuses_an_unknown_mark() {
+    let s = Sandbox::new();
+    s.marks(&[("a", None)]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["unmark", "--", "z"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(stderr(&out), "rex-session-manager: no mark named z\n");
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+}
+
+#[test]
+fn jump_mark_selects_the_marked_session_while_it_runs() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1"))]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+    let reply = r#"{"sessions":[{"session_id":"session:1","label":"a"}]}"#;
+
+    let out = s.run(reply, &["jump-mark", "--position", "1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "{\"session_id\":\"session:1\"}\n");
+    assert_eq!(s.calls(), "api call session.list {}\n");
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+}
+
+#[test]
+fn jump_mark_recreates_a_closed_session_from_its_preset_and_records_it() {
+    let s = Sandbox::new();
+    s.preset("d.json", r#"{"name":"dotfiles","tabs":[{"cwd":"/d"}]}"#);
+    s.marks(&[("notes", None), ("dotfiles", Some("session:gone"))]);
+    let reply = r#"{"session_id":"session:new","initial_windows":[{"window_id":"window:first"}]}"#;
+
+    let out = s.run(reply, &["jump-mark", "--position", "2"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"session_id\":\"session:new\",\"window_id\":\"window:first\"}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[("notes", None), ("dotfiles", Some("session:new"))]))
+    );
+    assert_eq!(
+        s.calls(),
+        concat!(
+            "api call session.list {}\n",
+            r#"api call session.create {"label":"dotfiles","initial_windows":["#,
+            r#"{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"#,
+            r#""cwd":"/d","command":["/opt/homebrew/bin/fish","--login","--interactive"],"shell":"none"}}}}]}"#,
+            "\n"
+        )
+    );
+}
+
+#[test]
+fn jump_mark_by_name_follows_the_label_when_the_marked_session_was_relabelled() {
+    let s = Sandbox::new();
+    s.marks(&[("a", Some("session:1"))]);
+    let reply = r#"{"sessions":[
+        {"session_id":"session:1","label":"other"},
+        {"session_id":"session:2","label":"a"}]}"#;
+
+    let out = s.run(reply, &["jump-mark", "--", "a"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "{\"session_id\":\"session:2\"}\n");
+    assert_eq!(s.read_marks(), Some(owned(&[("a", Some("session:2"))])));
+    assert_eq!(s.calls(), "api call session.list {}\n");
+}
+
+#[test]
+fn jump_mark_without_a_session_or_preset_says_to_unmark_it() {
+    let s = Sandbox::new();
+    s.preset("d.json", r#"{"name":"dotfiles","tabs":[{"cwd":"/d"}]}"#);
+    s.marks(&[("ghost", Some("session:9"))]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let out = s.run("{}", &["jump-mark", "--position", "1"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        stderr(&out),
+        "rex-session-manager: mark ghost has no running session and no preset; unmark it\n"
+    );
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+    assert_eq!(s.calls(), "api call session.list {}\n");
+}
+
+#[test]
+fn jump_mark_refuses_a_position_with_no_mark() {
+    let s = Sandbox::new();
+    s.marks(&[("a", None)]);
+
+    let out = s.run("{}", &["jump-mark", "--position", "3"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(
+        stderr(&out),
+        "rex-session-manager: no mark at position 3 (1 marked)\n"
+    );
+    assert_eq!(s.calls(), "");
+
+    let zero = s.run("{}", &["jump-mark", "--position", "0"]);
+    assert_eq!(zero.status.code(), Some(2));
+    assert_eq!(stdout(&zero), "");
+
+    let unknown = s.run("{}", &["jump-mark", "--", "z"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert_eq!(stderr(&unknown), "rex-session-manager: no mark named z\n");
 }

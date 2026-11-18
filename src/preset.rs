@@ -130,6 +130,16 @@ pub fn find(directory: &Path, name: &str) -> Result<Option<PathBuf>> {
     Ok(read_all(files)?.remove(name).map(|(path, _)| path))
 }
 
+/// The preset called `name`, if any, read with the same rules as [`find`].
+pub fn get(directory: &Path, name: &str) -> Result<Option<Preset>> {
+    let files = match preset_files(directory) {
+        Ok(files) => files,
+        Err(_) if !directory.exists() => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(read_all(files)?.remove(name).map(|(_, preset)| preset))
+}
+
 /// Writes `text` to `path`, which must not exist yet, creating the directory
 /// if needed. An existing file, preset or not, is never replaced; a preset
 /// already at `path` is named in the error, since a label whose file name
@@ -164,7 +174,8 @@ fn held_preset(path: &Path) -> Option<String> {
     Preset::parse(&text).ok().map(|preset| preset.name)
 }
 
-/// Replaces the file at `path` with `text` in one rename.
+/// Replaces the file at `path` with `text` in one rename, creating it when it
+/// is missing; a reader sees the old file or the new one, never a half.
 pub fn replace(path: &Path, text: &str) -> Result<()> {
     let temporary = write_temporary(path, text)?;
     fs::rename(&temporary, path).map_err(|error| {

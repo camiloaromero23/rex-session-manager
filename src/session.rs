@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::{
     preset::{Preset, Presets, Tab},
-    rex::{Block, CreateSession, InitialWindow, Layout, RexApi, TerminalOptions},
+    rex::{Block, CreateSession, InitialWindow, Layout, RexApi, Session, TerminalOptions},
 };
 
 const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
@@ -37,26 +37,35 @@ pub fn jump(rex: &impl RexApi, presets: &Presets, project: &str) -> Result<Targe
         .with_context(|| format!("unknown project: {project}"))?;
 
     let sessions = rex.list_sessions()?;
-    let mut matches = sessions.iter().filter(|session| session.label == project);
-    match (matches.next(), matches.next()) {
-        (Some(_), Some(_)) => bail!("more than one session is labelled {project}"),
-        (Some(session), None) => Ok(Target {
+    match labelled(&sessions, project)? {
+        Some(session) => Ok(Target {
             session_id: session.session_id.clone(),
             window_id: None,
         }),
-        (None, _) => {
-            let home = std::env::home_dir();
-            let created = rex.create_session(&create_request(preset, home.as_deref()))?;
-            Ok(Target {
-                session_id: created.session_id,
-                window_id: created
-                    .initial_windows
-                    .into_iter()
-                    .next()
-                    .map(|w| w.window_id),
-            })
-        }
+        None => create(rex, preset, std::env::home_dir().as_deref()),
     }
+}
+
+/// The one session labelled exactly `label`, if any; two is an error.
+pub fn labelled<'a>(sessions: &'a [Session], label: &str) -> Result<Option<&'a Session>> {
+    let mut matches = sessions.iter().filter(|session| session.label == label);
+    match (matches.next(), matches.next()) {
+        (Some(_), Some(_)) => bail!("more than one session is labelled {label}"),
+        (session, _) => Ok(session),
+    }
+}
+
+/// Creates a session from `preset` and targets its first window.
+pub fn create(rex: &impl RexApi, preset: &Preset, home: Option<&Path>) -> Result<Target> {
+    let created = rex.create_session(&create_request(preset, home))?;
+    Ok(Target {
+        session_id: created.session_id,
+        window_id: created
+            .initial_windows
+            .into_iter()
+            .next()
+            .map(|w| w.window_id),
+    })
 }
 
 /// The `session.create` request for a preset: one window per tab.
