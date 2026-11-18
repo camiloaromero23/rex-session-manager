@@ -34,7 +34,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    menu::{Menu, Mode, PickItem, ROW_ICON, safe_label},
+    menu::{MARK_ICON, MOVE_ICON, Menu, Mode, PickItem, UNMARK_ICON, safe_label},
     preset,
     rex::{RexApi, SessionReader},
     save::{self, Saved},
@@ -178,7 +178,7 @@ impl Marks {
                 id: mark.name.clone(),
                 title: safe_label(&mark.name),
                 subtitle: key(index).map(str::to_owned),
-                icon: ROW_ICON,
+                icon: MARK_ICON,
             })
             .collect()
     }
@@ -259,14 +259,14 @@ pub fn menu(marks: &Marks) -> MarksMenu {
                 id: move_id.clone(),
                 title: "Move…".to_owned(),
                 subtitle: None,
-                icon: ROW_ICON,
+                icon: MOVE_ICON,
             });
         }
         items.push(PickItem {
             id: unmark_id.clone(),
             title: "Unmark…".to_owned(),
             subtitle: None,
-            icon: ROW_ICON,
+            icon: UNMARK_ICON,
         });
     }
     MarksMenu {
@@ -404,7 +404,7 @@ pub fn choose(marks: &Marks, name: &str) -> Result<Moved> {
                 None => (index + 1).to_string(),
             },
             subtitle: Some(safe_label(&mark.name)),
-            icon: ROW_ICON,
+            icon: MARK_ICON,
         })
         .collect();
     Ok(Moved::Choose {

@@ -1112,13 +1112,13 @@ fn menu_marks_lists_marks_with_their_keys_and_an_unmark_row() {
         stdout(&out),
         concat!(
             r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
-            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
-            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"},"#,
-            r#"{"id":"c","title":"c","subtitle":"e","icon":"code"},"#,
-            r#"{"id":"d","title":"d","subtitle":"r","icon":"code"},"#,
-            r#"{"id":"e\tf","title":"e?f","icon":"code"},"#,
-            r#"{"id":"move","title":"Move…","icon":"code"},"#,
-            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"tag"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"tag"},"#,
+            r#"{"id":"c","title":"c","subtitle":"e","icon":"tag"},"#,
+            r#"{"id":"d","title":"d","subtitle":"r","icon":"tag"},"#,
+            r#"{"id":"e\tf","title":"e?f","icon":"tag"},"#,
+            r#"{"id":"move","title":"Move…","icon":"branch"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"package"}],"#,
             r#""unmark_id":"unmark","move_id":"move"}"#,
             "\n"
         )
@@ -1136,8 +1136,8 @@ fn menu_marks_never_gives_the_unmark_row_a_marks_id() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert!(
         stdout(&out).ends_with(concat!(
-            r#"{"id":"move","title":"Move…","icon":"code"},"#,
-            r#"{"id":"unmark++","title":"Unmark…","icon":"code"}],"#,
+            r#"{"id":"move","title":"Move…","icon":"branch"},"#,
+            r#"{"id":"unmark++","title":"Unmark…","icon":"package"}],"#,
             r#""unmark_id":"unmark++","move_id":"move"}"#,
             "\n"
         )),
@@ -1172,8 +1172,8 @@ fn menu_unmark_lists_the_marks_to_remove() {
         stdout(&out),
         concat!(
             r#"{"title":"Unmark ⚓","confirm":"Unmark","items":["#,
-            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
-            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"}]}"#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"tag"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"tag"}]}"#,
             "\n"
         )
     );
@@ -1203,7 +1203,7 @@ fn unmark_removes_a_mark_and_compacts_the_positions() {
 
     // `c` moved from the third position to the second.
     let menu = s.run("{}", &["menu", "unmark"]);
-    assert!(stdout(&menu).contains(r#"{"id":"c","title":"c","subtitle":"w","icon":"code"}"#));
+    assert!(stdout(&menu).contains(r#"{"id":"c","title":"c","subtitle":"w","icon":"tag"}"#));
 }
 
 #[test]
@@ -1526,8 +1526,8 @@ fn menu_marks_shows_no_move_row_for_a_single_mark() {
         stdout(&out),
         concat!(
             r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
-            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
-            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"tag"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"package"}],"#,
             r#""unmark_id":"unmark","move_id":"move"}"#,
             "\n"
         )
@@ -1547,10 +1547,10 @@ fn menu_marks_never_gives_the_move_row_a_marks_id() {
         stdout(&out),
         concat!(
             r#"{"title":"Marks ⚓","confirm":"Jump","items":["#,
-            r#"{"id":"move","title":"move","subtitle":"q","icon":"code"},"#,
-            r#"{"id":"z","title":"z","subtitle":"w","icon":"code"},"#,
-            r#"{"id":"move+","title":"Move…","icon":"code"},"#,
-            r#"{"id":"unmark","title":"Unmark…","icon":"code"}],"#,
+            r#"{"id":"move","title":"move","subtitle":"q","icon":"tag"},"#,
+            r#"{"id":"z","title":"z","subtitle":"w","icon":"tag"},"#,
+            r#"{"id":"move+","title":"Move…","icon":"branch"},"#,
+            r#"{"id":"unmark","title":"Unmark…","icon":"package"}],"#,
             r#""unmark_id":"unmark","move_id":"move+"}"#,
             "\n"
         )
@@ -1571,8 +1571,8 @@ fn menu_move_lists_the_marks_to_move() {
         stdout(&out),
         concat!(
             r#"{"title":"Move ⚓","confirm":"Choose","items":["#,
-            r#"{"id":"a","title":"a","subtitle":"q","icon":"code"},"#,
-            r#"{"id":"b","title":"b","subtitle":"w","icon":"code"}]}"#,
+            r#"{"id":"a","title":"a","subtitle":"q","icon":"tag"},"#,
+            r#"{"id":"b","title":"b","subtitle":"w","icon":"tag"}]}"#,
             "\n"
         )
     );
@@ -1600,11 +1600,11 @@ fn move_asks_where_the_named_mark_goes_and_writes_nothing() {
         concat!(
             r#"{"status":"choose","name":"b","from":2,"menu":{"#,
             r#""title":"Move b to…","confirm":"Move","items":["#,
-            r#"{"id":"1","title":"1 · q","subtitle":"a","icon":"code"},"#,
-            r#"{"id":"2","title":"2 · w","subtitle":"b","icon":"code"},"#,
-            r#"{"id":"3","title":"3 · e","subtitle":"c","icon":"code"},"#,
-            r#"{"id":"4","title":"4 · r","subtitle":"d","icon":"code"},"#,
-            r#"{"id":"5","title":"5","subtitle":"e?f","icon":"code"}]}}"#,
+            r#"{"id":"1","title":"1 · q","subtitle":"a","icon":"tag"},"#,
+            r#"{"id":"2","title":"2 · w","subtitle":"b","icon":"tag"},"#,
+            r#"{"id":"3","title":"3 · e","subtitle":"c","icon":"tag"},"#,
+            r#"{"id":"4","title":"4 · r","subtitle":"d","icon":"tag"},"#,
+            r#"{"id":"5","title":"5","subtitle":"e?f","icon":"tag"}]}}"#,
             "\n"
         )
     );

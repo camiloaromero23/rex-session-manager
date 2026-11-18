@@ -12,8 +12,19 @@ use serde::Serialize;
 use crate::{preset::Presets, rex::Session};
 
 /// Every row of every menu uses this icon; change it here to restyle all of
-/// them.
+/// them, except the marks menus, which use [`MARK_ICON`].
 pub const ROW_ICON: &str = "code";
+
+/// The icon of every mark row of the marks menus: `marks`, `unmark`, `move`,
+/// and the "Move … to…" menu. A mark is a place to jump back to, so it is not a
+/// session row and does not share [`ROW_ICON`].
+pub const MARK_ICON: &str = "tag";
+
+/// The icon of the marks menu's "Move…" row, which opens `menu move`.
+pub const MOVE_ICON: &str = "branch";
+
+/// The icon of the marks menu's "Unmark…" row, which opens `menu unmark`.
+pub const UNMARK_ICON: &str = "package";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
