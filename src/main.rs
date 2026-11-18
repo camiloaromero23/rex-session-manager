@@ -151,6 +151,14 @@ fn run(cli: Cli) -> Result<()> {
             .map_or_else(marks::default_directory, Ok)?;
         Marks::load(&directory)
     };
+    // Every command that changes the list locks it from this load to the store.
+    let lock_marks = || {
+        let directory = cli
+            .marks_dir
+            .clone()
+            .map_or_else(marks::default_directory, Ok)?;
+        Marks::load_for_update(&directory)
+    };
     let home = std::env::home_dir();
 
     match cli.command {
@@ -173,7 +181,7 @@ fn run(cli: Cli) -> Result<()> {
             print_json(&session::jump(&rex, &presets, &project)?)
         }
         Command::Kill { session_id } => {
-            let mut marks = load_marks()?;
+            let mut marks = lock_marks()?;
             rex.destroy_session(&session_id)?;
             marks.forget_session(&session_id)
         }
@@ -189,8 +197,8 @@ fn run(cli: Cli) -> Result<()> {
             command_line,
         )?),
         Command::Delete { confirmed, name } => {
-            // Read first when confirmed, so a broken marks file deletes nothing.
-            let mut marks = confirmed.then(load_marks).transpose()?;
+            // Read and lock first, so a broken marks file deletes nothing.
+            let mut marks = confirmed.then(lock_marks).transpose()?;
             let deleted = delete::delete(&sessions_dir()?, &name, confirmed)?;
             if let Some(marks) = &mut marks {
                 marks.forget_name(&name)?;
@@ -198,7 +206,7 @@ fn run(cli: Cli) -> Result<()> {
             print_json(&deleted)
         }
         Command::Mark { session_id } => {
-            let mut marks = load_marks()?;
+            let mut marks = lock_marks()?;
             print_json(&marks::mark(
                 &rex,
                 &mut marks,
@@ -208,14 +216,14 @@ fn run(cli: Cli) -> Result<()> {
                 command_line,
             )?)
         }
-        Command::Unmark { name } => print_json(&marks::unmark(&mut load_marks()?, &name)?),
+        Command::Unmark { name } => print_json(&marks::unmark(&mut lock_marks()?, &name)?),
         Command::JumpMark { position, name } => {
             let selector = match (position, name) {
                 (Some(position), _) => Selector::Position(usize::try_from(position)?),
                 (None, Some(name)) => Selector::Name(name),
                 (None, None) => unreachable!("clap requires one"),
             };
-            let mut marks = load_marks()?;
+            let mut marks = lock_marks()?;
             print_json(&marks::jump(
                 &rex,
                 &mut marks,

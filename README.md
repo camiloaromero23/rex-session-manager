@@ -132,6 +132,9 @@ A short ordered list of presets, each one chord away. One file holds them all,
 - The file is strict like a preset: an unknown key, an empty name, a repeated
   name, and a non-object are errors naming the file. A missing file is an empty
   list, never an error, and the list is written in one rename.
+- Commands that change the marks hold an exclusive lock on `.marks.lock` beside
+  `marks.json` from the read to the write, so concurrent marks are never lost;
+  read-only menus take no lock and create no file.
 - Known limit: a session closed by Rex itself (`session.close`, `Prefix+Shift+D`)
   never reaches the binary, so its mark stays; `jump-mark` then recreates the
   session from the preset.

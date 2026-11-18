@@ -18,6 +18,11 @@
 //! The file is strict like a preset: unknown keys, an empty name, or a repeated
 //! name are errors naming it. A missing file is an empty list, and it is
 //! written only when the list changes, in one rename.
+//!
+//! The list is written with a rename, so a lock on `marks.json` itself would
+//! not serialize two writers: commands that change the list lock `.marks.lock`
+//! beside it instead, from the load until the process is done with the list. A
+//! read-only load (the menus) takes no lock and creates nothing.
 
 use std::{
     env, fs, io,
@@ -39,6 +44,10 @@ use crate::{
 pub const KEYS: [&str; 4] = ["q", "w", "e", "r"];
 
 const FILE_NAME: &str = "marks.json";
+
+/// The file holding the write lock: never parsed as marks, and beside the
+/// marks file so a rename of that file cannot move it.
+const LOCK_FILE_NAME: &str = ".marks.lock";
 
 /// The id of the marks menu's "Unmark…" row when no mark is named that.
 const UNMARK_ROW: &str = "unmark";
@@ -62,6 +71,9 @@ struct MarksFile {
 pub struct Marks {
     path: PathBuf,
     marks: Vec<Mark>,
+    /// The exclusive lock held from the load until this list is dropped, so no
+    /// other command can write the list from the copy this one read.
+    _lock: Option<fs::File>,
 }
 
 /// `$XDG_STATE_HOME/rex-session-manager`, or
@@ -79,7 +91,32 @@ pub fn default_directory() -> Result<PathBuf> {
 
 impl Marks {
     /// Reads the marks file in `directory`; a missing file is an empty list.
+    ///
+    /// Nothing is created or locked, for the read-only menus.
     pub fn load(directory: &Path) -> Result<Self> {
+        Self::read(directory, None)
+    }
+
+    /// Reads the marks file while holding the write lock, creating the
+    /// directory and the lock file if needed. Every command that changes the
+    /// list loads this way, so two runs never lose each other's change.
+    pub fn load_for_update(directory: &Path) -> Result<Self> {
+        fs::create_dir_all(directory)
+            .with_context(|| format!("cannot create {}", directory.display()))?;
+        let lock_path = directory.join(LOCK_FILE_NAME);
+        let lock = fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("cannot open {}", lock_path.display()))?;
+        lock.lock()
+            .with_context(|| format!("cannot lock {}", lock_path.display()))?;
+        Self::read(directory, Some(lock))
+    }
+
+    fn read(directory: &Path, lock: Option<fs::File>) -> Result<Self> {
         let path = directory.join(FILE_NAME);
         let marks = match fs::read_to_string(&path) {
             Ok(text) => parse(&text).with_context(|| path.display().to_string())?,
@@ -88,7 +125,11 @@ impl Marks {
                 return Err(error).with_context(|| format!("cannot read {}", path.display()));
             }
         };
-        Ok(Self { path, marks })
+        Ok(Self {
+            path,
+            marks,
+            _lock: lock,
+        })
     }
 
     /// Writes the list back in one rename, creating the directory if needed.
@@ -170,7 +211,10 @@ fn parse(text: &str) -> Result<Vec<Mark>> {
             !mark.name.is_empty(),
             r#"mark {number} needs a non-empty string "name""#
         );
-        if file.marks[..index].iter().any(|seen| seen.name == mark.name) {
+        if file.marks[..index]
+            .iter()
+            .any(|seen| seen.name == mark.name)
+        {
             bail!("duplicate mark {:?}", mark.name);
         }
     }
@@ -369,6 +413,7 @@ mod tests {
                 name: "notes".into(),
                 session_id: None,
             }],
+            _lock: None,
         };
         let file = MarksFile {
             marks: marks.marks.clone(),

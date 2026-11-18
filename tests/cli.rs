@@ -5,7 +5,7 @@ use std::{
     fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 use tempfile::TempDir;
@@ -1013,9 +1013,18 @@ fn mark_refuses_an_unlabelled_session_and_writes_nothing() {
 #[test]
 fn a_broken_marks_file_is_an_error_naming_it_and_nothing_runs() {
     let cases = [
-        (r#"{"marks":[{"name":"a","slot":1}]}"#, "unknown field `slot`"),
-        (r#"{"marks":[{"name":"a"},{"name":"a"}]}"#, r#"duplicate mark "a""#),
-        (r#"{"marks":[{"name":""}]}"#, r#"needs a non-empty string "name""#),
+        (
+            r#"{"marks":[{"name":"a","slot":1}]}"#,
+            "unknown field `slot`",
+        ),
+        (
+            r#"{"marks":[{"name":"a"},{"name":"a"}]}"#,
+            r#"duplicate mark "a""#,
+        ),
+        (
+            r#"{"marks":[{"name":""}]}"#,
+            r#"needs a non-empty string "name""#,
+        ),
         ("[]", "must contain a JSON object"),
     ];
     for (text, expected) in cases {
@@ -1030,7 +1039,10 @@ fn a_broken_marks_file_is_an_error_naming_it_and_nothing_runs() {
         assert_eq!(stdout(&out), "", "{text}");
         let error = stderr(&out);
         assert!(error.starts_with("rex-session-manager: "), "{error}");
-        assert!(error.contains(&s.marks_file().display().to_string()), "{error}");
+        assert!(
+            error.contains(&s.marks_file().display().to_string()),
+            "{error}"
+        );
         assert!(error.contains(expected), "{error}");
         assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), text);
         assert!(s.sessions_listing().is_empty(), "{text}");
@@ -1168,7 +1180,11 @@ fn menu_unmark_lists_the_marks_to_remove() {
 #[test]
 fn unmark_removes_a_mark_and_compacts_the_positions() {
     let s = Sandbox::new();
-    s.marks(&[("a", Some("session:1")), ("b", Some("session:2")), ("c", None)]);
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", Some("session:2")),
+        ("c", None),
+    ]);
 
     let out = s.run("{}", &["unmark", "--", "b"]);
 
@@ -1336,7 +1352,11 @@ fn kill_destroys_nothing_while_the_marks_file_is_broken() {
         "{}",
         stderr(&out)
     );
-    assert_eq!(s.calls(), "", "kill must not destroy a session it cannot unmark");
+    assert_eq!(
+        s.calls(),
+        "",
+        "kill must not destroy a session it cannot unmark"
+    );
 }
 
 #[test]
@@ -1344,7 +1364,10 @@ fn delete_confirmed_removes_the_presets_mark() {
     let s = Sandbox::new();
     s.preset("d.json", r#"{"name":"dotfiles","tabs":[{"cwd":"/d"}]}"#);
     s.preset("n.json", r#"{"name":"notes","tabs":[{"cwd":"/n"}]}"#);
-    s.marks(&[("notes", Some("session:1")), ("dotfiles", Some("session:2"))]);
+    s.marks(&[
+        ("notes", Some("session:1")),
+        ("dotfiles", Some("session:2")),
+    ]);
 
     let out = s.run("{}", &["delete", "--confirmed", "--", "dotfiles"]);
 
@@ -1356,4 +1379,135 @@ fn delete_confirmed_removes_the_presets_mark() {
     );
     assert_eq!(s.read_marks(), Some(owned(&[("notes", Some("session:1"))])));
     assert_eq!(s.calls(), "", "delete must not call rex");
+}
+
+#[test]
+fn delete_confirmed_deletes_nothing_while_the_marks_file_is_broken() {
+    let s = Sandbox::new();
+    s.preset("n.json", r#"{"name":"notes","tabs":[{"cwd":"/n"}]}"#);
+    fs::create_dir_all(s.path("state")).unwrap();
+    fs::write(s.marks_file(), "not json").unwrap();
+
+    let out = s.run("{}", &["delete", "--confirmed", "--", "notes"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains(&s.marks_file().display().to_string()),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(s.sessions_listing(), ["n.json"]);
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), "not json");
+    assert_eq!(s.calls(), "");
+}
+
+#[test]
+fn kill_removes_all_marks_of_the_killed_session() {
+    let s = Sandbox::new();
+    s.marks(&[
+        ("a", Some("session:1")),
+        ("b", Some("session:1")),
+        ("c", Some("session:2")),
+    ]);
+
+    let out = s.run("{}", &["kill", "--", "session:1"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stdout(&out), "");
+    assert_eq!(s.read_marks(), Some(owned(&[("c", Some("session:2"))])));
+    assert_eq!(
+        s.calls(),
+        "api call session.destroy {\"session_id\":\"session:1\"}\n"
+    );
+}
+
+#[test]
+fn kill_and_delete_leave_an_unmatched_marks_file_byte_identical() {
+    let s = Sandbox::new();
+    s.preset("z.json", r#"{"name":"zz","tabs":[{"cwd":"/z"}]}"#);
+    s.marks(&[("a", Some("session:1"))]);
+    let before = fs::read_to_string(s.marks_file()).unwrap();
+
+    let kill = s.run("{}", &["kill", "--", "session:2"]);
+    assert_eq!(kill.status.code(), Some(0), "{}", stderr(&kill));
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+
+    let delete = s.run("{}", &["delete", "--confirmed", "--", "zz"]);
+    assert_eq!(delete.status.code(), Some(0), "{}", stderr(&delete));
+    assert_eq!(fs::read_to_string(s.marks_file()).unwrap(), before);
+}
+
+/// A fake `rex` that answers `session.view` with a label derived from the
+/// session id, so concurrent `mark` runs never share a reply file.
+fn write_labelling_rex(s: &Sandbox) {
+    let dir = s.path("").display().to_string();
+    let rex = s.path("rex");
+    fs::write(
+        &rex,
+        format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$*\" >> '{dir}/rex.log'\n",
+                "id=$(printf '%s' \"$4\" | sed -n 's/.*\"session_id\":\"\\([^\"]*\\)\".*/\\1/p')\n",
+                "case \"$3\" in\n",
+                "  session.view) printf '{{\"session_id\":\"%s\",\"label\":\"%s\",\"windows\":[]}}' \"$id\" \"${{id#session:}}\" ;;\n",
+                "  *) printf '{{}}' ;;\n",
+                "esac\n",
+            ),
+            dir = dir
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&rex, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn concurrent_marks_for_different_sessions_are_all_kept() {
+    let s = Sandbox::new();
+    for n in 0..8 {
+        s.preset(
+            &format!("p{n}.json"),
+            &format!(r#"{{"name":"p{n}","tabs":[{{"cwd":"/p{n}"}}]}}"#),
+        );
+    }
+    write_labelling_rex(&s);
+
+    for round in 0..5 {
+        let _ = fs::remove_file(s.marks_file());
+        let children: Vec<_> = (0..8)
+            .map(|n| {
+                Command::new(env!("CARGO_BIN_EXE_rex-session-manager"))
+                    .arg("--sessions-dir")
+                    .arg(s.path("sessions"))
+                    .arg("--marks-dir")
+                    .arg(s.path("state"))
+                    .args(["mark", "--", &format!("session:p{n}")])
+                    .env("REX_BIN", s.path("rex"))
+                    .env("HOME", s.path("home"))
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap()
+            })
+            .collect();
+        for child in children {
+            let out = child.wait_with_output().unwrap();
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "round {round}: {}",
+                stderr(&out)
+            );
+        }
+
+        let mut names: Vec<_> = s
+            .read_marks()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        names.sort();
+        let expected = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"];
+        assert_eq!(names, expected, "round {round}: concurrent marks were lost");
+    }
 }
