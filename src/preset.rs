@@ -15,31 +15,37 @@
 //! `run`. Unknown keys are rejected, so a typo such as `command` for `run` fails
 //! loudly instead of being ignored. The directory is read on every call, so a
 //! preset change takes effect on the next menu or jump.
+//!
+//! `save` writes presets back: a new file never replaces an existing one, and a
+//! replacement is written beside its target and renamed over it, so a reader
+//! never sees a half-written preset.
 
 use std::{
     collections::BTreeMap,
     env, fs,
+    io::{self, Write},
     path::{Path, PathBuf},
+    process,
 };
 
 use anyhow::{Context, Result, bail, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Presets keyed by project name, sorted by name.
 pub type Presets = BTreeMap<String, Preset>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preset {
     pub name: String,
     pub tabs: Vec<Tab>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tab {
     pub cwd: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<String>,
 }
 
@@ -53,6 +59,15 @@ impl Preset {
         let preset: Self = serde_json::from_value(value)?;
         preset.validate()?;
         Ok(preset)
+    }
+
+    /// The preset as a file: two-space indented JSON and a final newline. The
+    /// text is parsed back first, so `save` never writes a preset `load` would
+    /// reject.
+    pub fn to_file_text(&self) -> Result<String> {
+        let text = serde_json::to_string_pretty(self)? + "\n";
+        Self::parse(&text).context("the generated preset is invalid")?;
+        Ok(text)
     }
 
     fn validate(&self) -> Result<()> {
@@ -90,6 +105,84 @@ pub fn default_directory() -> Result<PathBuf> {
 /// preset, or two presets sharing a name, is an error naming the file: a preset
 /// never disappears silently.
 pub fn load(directory: &Path) -> Result<Presets> {
+    let files = preset_files(directory)?;
+    ensure!(
+        !files.is_empty(),
+        "no project session files in {}",
+        directory.display()
+    );
+    Ok(read_all(files)?
+        .into_values()
+        .map(|(_, preset)| (preset.name.clone(), preset))
+        .collect())
+}
+
+/// The file holding the preset called `name`, if any.
+///
+/// Every preset is read with the same rules as [`load`], so a broken preset or
+/// a duplicate name is still an error. A missing directory holds no presets.
+pub fn find(directory: &Path, name: &str) -> Result<Option<PathBuf>> {
+    let files = match preset_files(directory) {
+        Ok(files) => files,
+        Err(_) if !directory.exists() => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(read_all(files)?.remove(name).map(|(path, _)| path))
+}
+
+/// Writes `text` to `path`, which must not exist yet, creating the directory
+/// if needed. An existing file, preset or not, is never replaced.
+pub fn create(path: &Path, text: &str) -> Result<()> {
+    let directory = parent(path)?;
+    fs::create_dir_all(directory)
+        .with_context(|| format!("cannot create {}", directory.display()))?;
+    let temporary = write_temporary(path, text)?;
+    // A hard link fails instead of replacing an existing target, atomically.
+    let linked = fs::hard_link(&temporary, path);
+    let _ = fs::remove_file(&temporary);
+    match linked {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            bail!("cannot create {}: the file already exists", path.display())
+        }
+        Err(error) => Err(error).with_context(|| format!("cannot create {}", path.display())),
+    }
+}
+
+/// Replaces the file at `path` with `text` in one rename.
+pub fn replace(path: &Path, text: &str) -> Result<()> {
+    let temporary = write_temporary(path, text)?;
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        anyhow::Error::new(error).context(format!("cannot replace {}", path.display()))
+    })
+}
+
+/// Writes `text` to a hidden file beside `path`, which `load` skips.
+fn write_temporary(path: &Path, text: &str) -> Result<PathBuf> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("{} has no file name", path.display()))?;
+    let temporary = parent(path)?.join(format!(".{file_name}.{}.tmp", process::id()));
+    let written = fs::File::create(&temporary).and_then(|mut file| {
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.sync_all())
+    });
+    if let Err(error) = written {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("cannot write {}", temporary.display()));
+    }
+    Ok(temporary)
+}
+
+fn parent(path: &Path) -> Result<&Path> {
+    path.parent()
+        .with_context(|| format!("{} has no parent directory", path.display()))
+}
+
+/// The preset files in `directory`, sorted by file name.
+fn preset_files(directory: &Path) -> Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     for entry in
         fs::read_dir(directory).with_context(|| format!("cannot list {}", directory.display()))?
@@ -102,19 +195,17 @@ pub fn load(directory: &Path) -> Result<Presets> {
         }
     }
     files.sort();
-    ensure!(
-        !files.is_empty(),
-        "no project session files in {}",
-        directory.display()
-    );
+    Ok(files)
+}
 
-    let mut presets = Presets::new();
-    let mut sources: BTreeMap<String, PathBuf> = BTreeMap::new();
+/// Parses every file, keyed by preset name with its source path.
+fn read_all(files: Vec<PathBuf>) -> Result<BTreeMap<String, (PathBuf, Preset)>> {
+    let mut presets: BTreeMap<String, (PathBuf, Preset)> = BTreeMap::new();
     for path in files {
         let text =
             fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))?;
         let preset = Preset::parse(&text).with_context(|| path.display().to_string())?;
-        if let Some(first) = sources.get(&preset.name) {
+        if let Some((first, _)) = presets.get(&preset.name) {
             bail!(
                 "duplicate project {:?} in {} and {}",
                 preset.name,
@@ -122,8 +213,7 @@ pub fn load(directory: &Path) -> Result<Presets> {
                 path.display()
             );
         }
-        sources.insert(preset.name.clone(), path);
-        presets.insert(preset.name.clone(), preset);
+        presets.insert(preset.name.clone(), (path, preset));
     }
     Ok(presets)
 }

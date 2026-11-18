@@ -4,14 +4,15 @@
 //! side passes it through untouched. Each item's `id` is the exact thing acted
 //! on: a preset name, or a full session ID — never a label.
 
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap, path::Path};
 
 use clap::ValueEnum;
 use serde::Serialize;
 
 use crate::{preset::Presets, rex::Session};
 
-/// Every row of every menu uses this icon; change it here to restyle all three.
+/// Every row of every menu uses this icon; change it here to restyle all of
+/// them.
 const ROW_ICON: &str = "code";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -22,6 +23,10 @@ pub enum Mode {
     Active,
     /// Running sessions; choosing one destroys it at once.
     Close,
+    /// Running sessions; choosing one saves it as a preset.
+    Save,
+    /// Every project preset; choosing one asks to delete it.
+    Delete,
 }
 
 impl Mode {
@@ -30,6 +35,8 @@ impl Mode {
             Self::Projects => "Select Session",
             Self::Active => "Active Sessions 🟢",
             Self::Close => "Kill Session 💀",
+            Self::Save => "Save Session 💾",
+            Self::Delete => "Delete Preset 🗑",
         }
     }
 
@@ -40,13 +47,26 @@ impl Mode {
             Self::Projects => "Open Session",
             Self::Active => "Switch Session",
             Self::Close => "Close Session",
+            Self::Save => "Save Preset",
+            Self::Delete => "Delete Preset",
         }
     }
 }
 
+/// The `id` of the overwrite menu's row that replaces the preset; any other
+/// answer, Escape included, keeps it.
+pub const OVERWRITE: &str = "overwrite";
+
+/// The `id` of the delete menu's row that removes the preset; any other
+/// answer, Escape included, keeps it.
+pub const DELETE: &str = "delete";
+
+/// The `id` of the row that keeps the preset in a confirmation menu.
+const CANCEL: &str = "cancel";
+
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Menu {
-    pub title: &'static str,
+    pub title: Cow<'static, str>,
     pub confirm: &'static str,
     pub items: Vec<PickItem>,
 }
@@ -54,9 +74,38 @@ pub struct Menu {
 impl Menu {
     pub fn new(mode: Mode, items: Vec<PickItem>) -> Self {
         Self {
-            title: mode.title(),
+            title: Cow::Borrowed(mode.title()),
             confirm: mode.confirm(),
             items,
+        }
+    }
+
+    /// Asks whether to replace the preset `name` stored at `path`.
+    pub fn overwrite(name: &str, path: &Path) -> Self {
+        Self::confirming("Overwrite", OVERWRITE, name, path)
+    }
+
+    /// Asks whether to delete the preset `name` stored at `path`.
+    pub fn delete(name: &str, path: &Path) -> Self {
+        Self::confirming("Delete", DELETE, name, path)
+    }
+
+    /// A menu asking whether to `action` the preset `name` stored at `path`.
+    /// The committing row's id is `id`; any other answer keeps the preset.
+    fn confirming(action: &str, id: &str, name: &str, path: &Path) -> Self {
+        let row = |id: &str, title: &str, subtitle: Option<String>| PickItem {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            subtitle,
+            icon: ROW_ICON,
+        };
+        Self {
+            title: Cow::Owned(format!("{action} {}?", safe_label(name))),
+            confirm: "Confirm",
+            items: vec![
+                row(id, action, Some(path.display().to_string())),
+                row(CANCEL, "Cancel", None),
+            ],
         }
     }
 }
@@ -179,6 +228,34 @@ mod tests {
             .collect();
 
         assert_eq!(ids, ["dotfiles", "notes"]);
+    }
+
+    #[test]
+    fn confirmation_menus_name_the_preset_and_its_file() {
+        let path = Path::new("/sessions/dot files.json");
+
+        assert_eq!(
+            serde_json::to_value(Menu::overwrite("dot files", path)).unwrap(),
+            json!({
+                "title": "Overwrite dot files?",
+                "confirm": "Confirm",
+                "items": [
+                    {"id": "overwrite", "title": "Overwrite", "subtitle": "/sessions/dot files.json", "icon": "code"},
+                    {"id": "cancel", "title": "Cancel", "icon": "code"}
+                ]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(Menu::delete("dot files", path)).unwrap(),
+            json!({
+                "title": "Delete dot files?",
+                "confirm": "Confirm",
+                "items": [
+                    {"id": "delete", "title": "Delete", "subtitle": "/sessions/dot files.json", "icon": "code"},
+                    {"id": "cancel", "title": "Cancel", "icon": "code"}
+                ]
+            })
+        );
     }
 
     #[test]

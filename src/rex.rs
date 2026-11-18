@@ -21,6 +21,72 @@ pub trait RexApi {
     fn destroy_session(&self, session_id: &str) -> Result<()>;
 }
 
+/// The read-only Rex server operations `save` uses to describe a session.
+pub trait SessionReader {
+    fn session_view(&self, session_id: &str) -> Result<SessionView>;
+    fn terminal_pwd(&self, session_id: &str, block_id: &str) -> Result<TerminalPwd>;
+    fn terminal_process(&self, session_id: &str, block_id: &str) -> Result<TerminalProcess>;
+}
+
+/// Output of `session.view`: windows in tab order, each with its layers and
+/// blocks. Only the fields `save` reads are modelled; the rest is ignored.
+#[derive(Debug, Deserialize)]
+pub struct SessionView {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub windows: Vec<WindowView>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WindowView {
+    #[serde(default)]
+    pub focused_block_id: Option<String>,
+    #[serde(default)]
+    pub layers: Vec<LayerView>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LayerView {
+    #[serde(default)]
+    pub blocks: Vec<BlockView>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BlockView {
+    pub block_id: String,
+    #[serde(default)]
+    pub flavor: String,
+}
+
+/// Output of the terminal block method `pwd`: a `file://` URL, reported only
+/// by shells that emit it (OSC 7); empty or missing otherwise.
+#[derive(Debug, Deserialize)]
+pub struct TerminalPwd {
+    #[serde(default)]
+    pub pwd: Option<String>,
+}
+
+/// Output of the terminal block method `process`.
+#[derive(Debug, Deserialize)]
+pub struct TerminalProcess {
+    #[serde(default)]
+    pub foreground: Option<ProcessView>,
+}
+
+/// A process as Rex describes it. Rex reports no arguments, only `argv0`.
+#[derive(Debug, Deserialize)]
+pub struct ProcessView {
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub argv0: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 /// One running session, as listed by `session.list`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Session {
@@ -89,6 +155,13 @@ struct SessionList {
 #[derive(Serialize)]
 struct SessionTarget<'a> {
     session_id: &'a str,
+}
+
+/// Arguments of a block method called by its full name.
+#[derive(Serialize)]
+struct BlockTarget<'a> {
+    session_id: &'a str,
+    block_id: &'a str,
 }
 
 /// Where the Rex server installs its `rex` client on macOS, relative to `HOME`.
@@ -179,6 +252,32 @@ impl RexApi for RexCli {
         let _: serde::de::IgnoredAny =
             self.call("session.destroy", &SessionTarget { session_id })?;
         Ok(())
+    }
+}
+
+impl SessionReader for RexCli {
+    fn session_view(&self, session_id: &str) -> Result<SessionView> {
+        self.call("session.view", &SessionTarget { session_id })
+    }
+
+    fn terminal_pwd(&self, session_id: &str, block_id: &str) -> Result<TerminalPwd> {
+        self.call(
+            "com.superlogical.terminal.pwd",
+            &BlockTarget {
+                session_id,
+                block_id,
+            },
+        )
+    }
+
+    fn terminal_process(&self, session_id: &str, block_id: &str) -> Result<TerminalProcess> {
+        self.call(
+            "com.superlogical.terminal.process",
+            &BlockTarget {
+                session_id,
+                block_id,
+            },
+        )
     }
 }
 

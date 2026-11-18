@@ -7,12 +7,17 @@
 //! returns. Every subcommand that returns data prints exactly one JSON value on
 //! stdout; errors go to stderr with a non-zero exit status.
 
+mod delete;
 mod menu;
 mod preset;
 mod rex;
+mod save;
 mod session;
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{
+    path::PathBuf,
+    process::{ExitCode, Stdio},
+};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -50,6 +55,35 @@ enum Command {
     Jump { project: String },
     /// Destroy the running session SESSION_ID and every block in it.
     Kill { session_id: String },
+    /// Save the running session SESSION_ID as a preset named after its label.
+    ///
+    /// Each tab keeps its focused terminal pane: its working directory and the
+    /// program in its foreground, unless that is the shell. Prints
+    /// `{"status": "created"|"overwritten", "name": …, "path": …}`. When a preset
+    /// of that name exists and --overwrite is absent, nothing is written and
+    /// the status is `exists`, with a `menu` asking whether to overwrite it.
+    Save {
+        /// Replace the existing preset NAME, in its current file. NAME is the
+        /// `name` the `exists` status reported; a session labelled otherwise by
+        /// now is refused, so only the confirmed preset is ever replaced.
+        #[arg(long, value_name = "NAME")]
+        overwrite: Option<String>,
+        session_id: String,
+    },
+    /// Delete the project preset NAME.
+    ///
+    /// Without --confirmed nothing is removed: prints
+    /// `{"status": "confirm", "name": …, "path": …, "menu": …}`, where `menu`
+    /// asks whether to delete that file. With --confirmed, removes the file
+    /// holding NAME and prints `{"status": "deleted", "name": …, "path": …}`.
+    /// Running sessions are never touched.
+    Delete {
+        /// Remove NAME instead of asking whether to.
+        #[arg(long)]
+        confirmed: bool,
+        /// The preset name, not its file name.
+        name: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -74,8 +108,12 @@ fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Menu { mode } => {
             let items = match mode {
-                Mode::Projects => menu::project_items(&preset::load(&sessions_dir()?)?),
-                Mode::Active | Mode::Close => menu::session_items(&rex.list_sessions()?),
+                Mode::Projects | Mode::Delete => {
+                    menu::project_items(&preset::load(&sessions_dir()?)?)
+                }
+                Mode::Active | Mode::Close | Mode::Save => {
+                    menu::session_items(&rex.list_sessions()?)
+                }
             };
             print_json(&Menu::new(mode, items))
         }
@@ -84,7 +122,35 @@ fn run(cli: Cli) -> Result<()> {
             print_json(&session::jump(&rex, &presets, &project)?)
         }
         Command::Kill { session_id } => rex.destroy_session(&session_id),
+        Command::Save {
+            overwrite,
+            session_id,
+        } => print_json(&save::save(
+            &rex,
+            &sessions_dir()?,
+            &session_id,
+            overwrite.as_deref(),
+            std::env::home_dir().as_deref(),
+            command_line,
+        )?),
+        Command::Delete { confirmed, name } => {
+            print_json(&delete::delete(&sessions_dir()?, &name, confirmed)?)
+        }
     }
+}
+
+/// The full command line of local process `pid`, which Rex does not report.
+/// `/bin/ps` by absolute path: Lua actions run with a bare `PATH`.
+fn command_line(pid: u32) -> Option<String> {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-o", "args=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    let line = String::from_utf8(output.stdout).ok()?;
+    let line = line.trim();
+    (output.status.success() && !line.is_empty()).then(|| line.to_owned())
 }
 
 fn print_json(value: &impl Serialize) -> Result<()> {
