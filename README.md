@@ -23,11 +23,51 @@ key → Lua action → rex-session-manager menu <mode>  → JSON menu
 cargo install --path .
 ```
 
+## Set up Rex
+
 Rex runs Lua actions with a bare environment
 (`PATH=/usr/bin:/bin:/usr/sbin:/sbin`), so the Lua bridge calls the binary by
-absolute path (`$HOME/.cargo/bin/rex-session-manager`). The binary finds the
-`rex` client itself, in this order: `$REX_BIN`, `$REX_BIN_DIR/rex` (set in Rex
-terminals), `rex` on `PATH`, then the Rex server's macOS install location.
+absolute path. `init-lua` prints the bridge with that path written in: the
+path the binary runs from, or `--bin PATH`. Save it beside your Rex `init.lua`:
+
+```sh
+rex-session-manager init-lua > ~/.config/rex/rex_session_manager.lua
+```
+
+Then load it from `init.lua` with your prefix:
+
+```lua
+require("rex_session_manager").setup("ctrl+a")
+```
+
+`setup` registers the `session_manager`, `jump_project`, `mark_session`,
+`marks_menu`, and `jump_mark` actions and binds, after the prefix:
+
+| Keys | Does |
+| --- | --- |
+| `s` | Browse the presets and jump to one. |
+| `ctrl+s` | Switch to a running session. |
+| `ctrl+k` | Close a running session. |
+| `ctrl+w` | Save a running session as a preset. |
+| `ctrl+d` | Delete a preset, after a confirmation. |
+| `ctrl+h` `a` | Mark the current session. |
+| `ctrl+h` `m` / `ctrl+h` `ctrl+m` | The marks menu: jump, move, or unmark. |
+| `q` `w` `e` `r` | Jump to marks 1-4. |
+
+Bind your own project keys to `jump_project`:
+
+```lua
+rex.bind("ctrl+a>n", "jump_project", { project = "nvim" })
+```
+
+The presets are read from `sessions/` beside the bridge, the marks from
+`~/.local/state/rex-session-manager`. Print the bridge again whenever the
+binary moves; the bridge also exposes `run`, `jump`, and `jump_mark` for your
+own actions.
+
+The binary finds the `rex` client itself, in this order: `$REX_BIN`,
+`$REX_BIN_DIR/rex` (set in Rex terminals), `rex` on `PATH`, then the Rex
+server's macOS install location.
 
 ## Commands
 
@@ -47,6 +87,7 @@ terminals), `rex` on `PATH`, then the Rex server's macOS install location.
 | `move NAME` | Moves nothing: reports the mark's position and a menu of the positions it can move to (see [Marks](#marks)). | `{status, name, from, menu}`; `status` is `choose` |
 | `move --to N NAME` | Moves the mark `NAME` to position `N`; the marks between shift by one. A mark already at `N` leaves the file untouched. | `{status, name, from, to, key}`; `status` is `moved`, `key` (`q`, `w`, `e`, `r`) only when `N` is one of the first four positions |
 | `jump-mark --position N` / `jump-mark NAME` | Goes to the mark by its 1-based position (the `q`, `w`, `e`, `r` keys) or by name (the menu). | `{session_id, window_id?}` like `jump` |
+| `init-lua [--bin PATH]` | Prints the Lua bridge for the Rex config, calling the binary at `PATH` or, by default, the path it runs from (see [Set up Rex](#set-up-rex)). A relative `PATH` is refused. | Lua source |
 
 `--sessions-dir DIR` (or `REX_SESSIONS_DIR`) picks the preset directory;
 the default is `$XDG_CONFIG_HOME/rex/sessions`, else `~/.config/rex/sessions`.
@@ -153,6 +194,7 @@ A short ordered list of presets, each one chord away. One file holds them all,
 | Module | Holds |
 | --- | --- |
 | `main.rs` | CLI (clap) and dispatch. |
+| `bridge.rs` | `init-lua`: the Lua bridge (`bridge.lua`) with the binary path written in. |
 | `preset.rs` | Preset parsing, validation, directory loading, and writing. |
 | `menu.rs` | The menus and label sanitization. |
 | `session.rs` | `jump` and the `session.create` request. |

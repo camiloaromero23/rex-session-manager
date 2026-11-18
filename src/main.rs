@@ -7,6 +7,7 @@
 //! returns. Every subcommand that returns data prints exactly one JSON value on
 //! stdout; errors go to stderr with a non-zero exit status.
 
+mod bridge;
 mod delete;
 mod marks;
 mod menu;
@@ -137,6 +138,17 @@ enum Command {
         /// The mark's name, as the marks menu uses.
         name: Option<String>,
     },
+    /// Print the Lua module the Rex config loads to reach this binary.
+    ///
+    /// Save it as `rex_session_manager.lua` beside the Rex `init.lua` and call
+    /// `require("rex_session_manager").setup(PREFIX)`. Rex runs actions with a
+    /// bare PATH, so the module calls this binary by absolute path: by default
+    /// the path it is running from. Print it again after the binary moves.
+    InitLua {
+        /// The absolute path the module calls instead of this binary's own.
+        #[arg(long, value_name = "PATH")]
+        bin: Option<PathBuf>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -175,6 +187,11 @@ fn run(cli: Cli) -> Result<()> {
     let home = std::env::home_dir();
 
     match cli.command {
+        Command::InitLua { bin } => {
+            let binary = bin.map_or_else(std::env::current_exe, Ok)?;
+            print!("{}", bridge::module(&binary)?);
+            Ok(())
+        }
         Command::Menu { mode: Mode::Marks } => print_json(&marks::menu(&load_marks()?)),
         Command::Menu { mode: Mode::Unmark } => print_json(&marks::unmark_menu(&load_marks()?)),
         Command::Menu { mode: Mode::Move } => print_json(&marks::move_menu(&load_marks()?)),

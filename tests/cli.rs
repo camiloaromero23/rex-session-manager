@@ -1751,3 +1751,79 @@ fn move_refuses_a_position_past_the_list_an_unknown_mark_and_zero() {
 
     assert_eq!(s.calls(), "", "move must not call rex");
 }
+
+/// Runs `init-lua` with `args`, against a sandbox whose fake `rex` logs any call.
+fn init_lua(args: &[&str]) -> (Sandbox, Output) {
+    let s = Sandbox::new();
+    let mut argv = vec!["init-lua"];
+    argv.extend_from_slice(args);
+    let output = s.run("{}", &argv);
+    (s, output)
+}
+
+#[test]
+fn init_lua_writes_the_given_binary_path_into_the_bridge() {
+    let (s, output) = init_lua(&["--bin", "/opt/homebrew/bin/rex-session-manager"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    let lua = stdout(&output);
+    assert!(
+        lua.contains("\nlocal BINARY = \"/opt/homebrew/bin/rex-session-manager\"\n"),
+        "{lua}"
+    );
+    assert!(lua.ends_with("\nreturn M\n"), "{lua}");
+    // The bridge API the actions use, and the setup that registers them.
+    for name in [
+        "function M.run(",
+        "function M.jump(",
+        "function M.jump_mark(",
+        "M.SESSIONS_PATH =",
+        "M.MARKS_PATH =",
+        "function M.setup(PREFIX)",
+    ] {
+        assert!(lua.contains(name), "missing {name}");
+    }
+    assert!(!lua.contains("@BINARY@"), "placeholder left in the module");
+    // Printing the module talks to no Rex server.
+    assert_eq!(s.calls(), "");
+}
+
+#[test]
+fn init_lua_defaults_to_the_running_binary() {
+    let (_, output) = init_lua(&[]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let binary = env!("CARGO_BIN_EXE_rex-session-manager");
+    assert!(
+        stdout(&output).contains(&format!("\nlocal BINARY = \"{binary}\"\n")),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn init_lua_escapes_the_path_as_a_lua_string() {
+    let (_, output) = init_lua(&["--bin", "/opt/a\"b\\c\nd/rex-session-manager"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("\nlocal BINARY = \"/opt/a\\\"b\\\\c\\nd/rex-session-manager\"\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn init_lua_refuses_a_relative_binary_path() {
+    let (s, output) = init_lua(&["--bin", "bin/rex-session-manager"]);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        "rex-session-manager: --bin must be an absolute path, because Rex runs actions \
+         from an unknown directory: bin/rex-session-manager\n"
+    );
+    assert_eq!(s.calls(), "");
+}
