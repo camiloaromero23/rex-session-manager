@@ -19,9 +19,29 @@ key → Lua action → rex-session-manager menu <mode>  → JSON menu
 
 ## Install
 
+macOS only: the Rex client, which runs the Lua actions, is macOS-only.
+
+With [Homebrew](https://brew.sh):
+
 ```sh
-cargo install --path .
+brew install camiloaromero23/tap/rex-session-manager
 ```
+
+With [mise](https://mise.jdx.dev):
+
+```sh
+mise use -g github:camiloaromero23/rex-session-manager
+```
+
+From source, with cargo:
+
+```sh
+cargo install --git https://github.com/camiloaromero23/rex-session-manager
+```
+
+Then print the Lua bridge (see [Set up Rex](#set-up-rex)). mise installs each
+version in its own directory, so print the bridge again after `mise upgrade`;
+Homebrew and cargo keep the same path across upgrades.
 
 ## Set up Rex
 
@@ -211,6 +231,24 @@ A short ordered list of presets, each one chord away. One file holds them all,
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+### Releasing
+
+Releases are built by [dist](https://github.com/axodotdev/cargo-dist)
+(`dist-workspace.toml`, `.github/workflows/release.yml`). Bump `version` in
+`Cargo.toml`, merge to `main`, then push the matching tag:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The workflow builds the macOS binaries, attaches them to a GitHub Release
+(which mise installs from), and pushes the formula to
+[camiloaromero23/homebrew-tap](https://github.com/camiloaromero23/homebrew-tap).
+That push needs the repository secret `HOMEBREW_TAP_TOKEN`: a token with
+contents write access to the tap. After changing the dist config, run
+`dist generate` to regenerate the workflow.
 
 ## License
 

@@ -29,9 +29,10 @@ S5. The README documents the Homebrew, mise, and cargo installs and the
 ## Tasks
 
 - [x] T1 (S1) inline — repository created, `main` pushed; no commit.
-- [ ] T2 (S2) inline — package metadata and license files.
-- [ ] T3 (S3, S5) inline — `init-lua` subcommand, embedded module, tests, docs.
-- [ ] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
+- [x] T2 (S2) inline — package metadata and license files. Commit 7442fe1.
+- [x] T3 (S3, S5) inline — `init-lua` subcommand, embedded module, tests, docs.
+      Commit 3c67e2a.
+- [x] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
 - [ ] T5 (S4) human — `HOMEBREW_TAP_TOKEN` secret, merge, tag `v0.1.0`, verify
       `brew install` and `mise use` from the release.
 
@@ -49,3 +50,18 @@ L5. Decision: `init-lua` writes `std::env::current_exe()` unresolved. Through
     Homebrew that is the stable `$(brew --prefix)/bin` link; mise runs the binary
     from a versioned install directory, so mise users re-run `init-lua` after an
     upgrade or pass `--bin`.
+L6. T3 evidence: RED (4 `init_lua_*` CLI tests failed, unknown subcommand exit
+    2), then GREEN: 98 tests, clippy and fmt clean. Generated module passed
+    `luac -p` and a stubbed-`rex` load: 5 actions, 12 binds, `jump_project`
+    ran `<bin> --sessions-dir <cfg>/sessions --marks-dir … jump -- nvim` and
+    queued `session.select`; a failing exec raised "rex-session-manager
+    exited 1: no preset named x". Not loaded in a live Rex yet.
+L7. Slice boundary: T2+T3 reached 851 authored lines (the Lua module is ~330);
+    T4 is its own slice.
+L8. T4 evidence: `dist init` (0.34.0) ignored the `-t` flags, so targets were
+    set by hand in `dist-workspace.toml`, with `tap`, `publish-jobs =
+    ["homebrew"]`, `install-updater = false`. `dist plan` lists only the two
+    macOS archives + formula; a local `dist build` for aarch64 produced the
+    archive (binary, both licenses, README; `--version` 0.1.0) and a formula
+    with `license any_of: ["MIT", "Apache-2.0"]`. Tap repository
+    https://github.com/camiloaromero23/homebrew-tap created (public).
