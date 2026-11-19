@@ -47,7 +47,8 @@ struct Cli {
 
     /// The shell new tabs start, by path or by name, such as
     /// `/opt/homebrew/bin/fish` or `fish`. Sent to Rex as the `shell` option of
-    /// each tab's terminal block. Left out, Rex starts its own default shell.
+    /// each tab's terminal block, and written into the `init.lua` require line
+    /// by `init`. Left out, Rex starts its own default shell.
     #[arg(long, env = "REX_SHELL", global = true, value_name = "SHELL")]
     shell: Option<String>,
 
@@ -144,16 +145,40 @@ enum Command {
         /// The mark's name, as the marks menu uses.
         name: Option<String>,
     },
-    /// Print the Lua module the Rex config loads to reach this binary.
+    /// Write the Lua bridge into the Rex config and make `init.lua` load it.
     ///
-    /// Save it as `rex_session_manager.lua` beside the Rex `init.lua` and call
-    /// `require("rex_session_manager").setup(PREFIX)`. Rex runs actions with a
-    /// bare PATH, so the module calls this binary by absolute path: by default
-    /// the path it is running from. Print it again after the binary moves.
-    InitLua {
-        /// The absolute path the module calls instead of this binary's own.
+    /// Writes `rex_session_manager.lua` to `--config-dir`, else
+    /// `$XDG_CONFIG_HOME/rex`, else `~/.config/rex`, creating the directory
+    /// when missing. An existing bridge is replaced only when this command
+    /// wrote it, unless --force.
+    ///
+    /// Then appends `require("rex_session_manager").setup(PREFIX)` to
+    /// `init.lua` when no line of it requires the module, creating the file
+    /// when it is missing; an `init.lua` that already loads the bridge is left
+    /// untouched.
+    ///
+    /// Prints `{status, path, init_lua: {status, path}}`; `status` is
+    /// `created`, `updated`, or `unchanged`, and `init_lua.status` is
+    /// `created`, `appended`, or `present`. With --stdout, prints the bridge
+    /// instead and writes nothing.
+    Init {
+        /// The Rex config directory. Defaults to `$XDG_CONFIG_HOME/rex`, or
+        /// `~/.config/rex`.
+        #[arg(long, value_name = "DIR")]
+        config_dir: Option<PathBuf>,
+        /// The absolute path the bridge calls instead of this binary's own.
         #[arg(long, value_name = "PATH")]
         bin: Option<PathBuf>,
+        /// The prefix `init.lua` passes to `setup`, like `ctrl+a`.
+        #[arg(long, value_name = "KEY", default_value = "ctrl+a")]
+        prefix: String,
+        /// Replace `rex_session_manager.lua` even when this command did not
+        /// write it.
+        #[arg(long)]
+        force: bool,
+        /// Print the bridge instead of writing it. Writes nothing.
+        #[arg(long)]
+        stdout: bool,
     },
 }
 
@@ -194,10 +219,20 @@ fn run(cli: Cli) -> Result<()> {
     let shell = cli.shell.as_deref();
 
     match cli.command {
-        Command::InitLua { bin } => {
+        Command::Init {
+            config_dir,
+            bin,
+            prefix,
+            force,
+            stdout,
+        } => {
             let binary = bin.map_or_else(std::env::current_exe, Ok)?;
-            print!("{}", bridge::module(&binary)?);
-            Ok(())
+            if stdout {
+                print!("{}", bridge::module(&binary)?);
+                return Ok(());
+            }
+            let config = config_dir.map_or_else(preset::default_config_directory, Ok)?;
+            print_json(&bridge::install(&config, &binary, &prefix, shell, force)?)
         }
         Command::Menu { mode: Mode::Marks } => print_json(&marks::menu(&load_marks()?)),
         Command::Menu { mode: Mode::Unmark } => print_json(&marks::unmark_menu(&load_marks()?)),

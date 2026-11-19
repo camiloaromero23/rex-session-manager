@@ -43,33 +43,47 @@ From source, with cargo:
 cargo install --git https://github.com/camiloaromero23/rex-session-manager
 ```
 
-Then print the Lua bridge (see [Set up Rex](#set-up-rex)). mise installs each
-version in its own directory, so print the bridge again after `mise upgrade`;
-Homebrew and cargo keep the same path across upgrades.
+Then run `rex-session-manager init` (see [Set up Rex](#set-up-rex)). mise
+installs each version in its own directory, so run `init` again after `mise
+upgrade`; Homebrew and cargo keep the same path across upgrades.
 
 ## Set up Rex
 
 Rex runs Lua actions with a bare environment
 (`PATH=/usr/bin:/bin:/usr/sbin:/sbin`), so the Lua bridge calls the binary by
-absolute path. `init-lua` prints the bridge with that path written in: the
-path the binary runs from, or `--bin PATH`. Save it beside your Rex `init.lua`:
+absolute path. `init` writes that bridge into the Rex config and makes
+`init.lua` load it:
 
 ```sh
-rex-session-manager init-lua > ~/.config/rex/rex_session_manager.lua
+rex-session-manager init
 ```
 
-Then load it from `init.lua` with your prefix:
+It writes `rex_session_manager.lua` to `$XDG_CONFIG_HOME/rex`, else
+`~/.config/rex` (or to `--config-dir DIR`), creating the directory when it is
+missing. The bridge calls the path the binary runs from, or `--bin PATH`.
 
-```lua
-require("rex_session_manager").setup("ctrl+a")
-```
+Then it appends `require("rex_session_manager").setup("ctrl+a")` to `init.lua`
+when no line of that file requires the module, creating the file when it is
+missing; an `init.lua` that already loads the bridge is left byte for byte
+alone. `--prefix KEY` sets the prefix instead of `ctrl+a`.
 
 Pass the shell every new tab should start when your login shell is not the one
-you use in Rex:
+you use in Rex — `--shell` writes it into that require line, and the bridge
+passes it on:
+
+```sh
+rex-session-manager --shell /opt/homebrew/bin/fish init
+```
+
+which appends:
 
 ```lua
 require("rex_session_manager").setup("ctrl+a", { shell = "/opt/homebrew/bin/fish" })
 ```
+
+An existing `rex_session_manager.lua` is replaced only when `init` wrote it (the
+first line says so); any other file is refused with its name, and `--force`
+replaces it. To print the bridge instead of writing anything, use `--stdout`.
 
 `shell` is a path or a name such as `fish`, sent as the `shell` option of every
 tab in `session.create`. Left out, Rex starts its own default shell — your
@@ -99,9 +113,9 @@ rex.bind("ctrl+a>n", "jump_project", { project = "nvim" })
 ```
 
 The presets are read from `sessions/` beside the bridge, the marks from
-`~/.local/state/rex-session-manager`. Print the bridge again whenever the
-binary moves; the bridge also exposes `run`, `jump`, and `jump_mark` for your
-own actions.
+`~/.local/state/rex-session-manager`. Run `init` again whenever the binary
+moves; the bridge also exposes `run`, `jump`, and `jump_mark` for your own
+actions.
 
 The binary finds the `rex` client itself, in this order: `$REX_BIN`,
 `$REX_BIN_DIR/rex` (set in Rex terminals), `rex` on `PATH`, then the Rex
@@ -125,7 +139,7 @@ server's macOS install location.
 | `move NAME` | Moves nothing: reports the mark's position and a menu of the positions it can move to (see [Marks](#marks)). | `{status, name, from, menu}`; `status` is `choose` |
 | `move --to N NAME` | Moves the mark `NAME` to position `N`; the marks between shift by one. A mark already at `N` leaves the file untouched. | `{status, name, from, to, key}`; `status` is `moved`, `key` (`q`, `w`, `e`, `r`) only when `N` is one of the first four positions |
 | `jump-mark --position N` / `jump-mark NAME` | Goes to the mark by its 1-based position (the `q`, `w`, `e`, `r` keys) or by name (the menu). | `{session_id, window_id?}` like `jump` |
-| `init-lua [--bin PATH]` | Prints the Lua bridge for the Rex config, calling the binary at `PATH` or, by default, the path it runs from (see [Set up Rex](#set-up-rex)). A relative `PATH` is refused. | Lua source |
+| `init [--config-dir DIR] [--bin PATH] [--prefix KEY] [--force] [--stdout]` | Writes the Lua bridge into the Rex config, calling the binary at `PATH` or, by default, the path it runs from, then appends the require line to `init.lua` when it is missing (see [Set up Rex](#set-up-rex)). An existing bridge is replaced only when this command wrote it, unless `--force`; `--stdout` prints the bridge and writes nothing. A relative `PATH` is refused. | `{status, path, init_lua: {status, path}}`; `status` is `created`, `updated`, or `unchanged`, `init_lua.status` is `created`, `appended`, or `present`; with `--stdout`, the Lua source |
 
 `--sessions-dir DIR` (or `REX_SESSIONS_DIR`) picks the preset directory;
 the default is `$XDG_CONFIG_HOME/rex/sessions`, else `~/.config/rex/sessions`.
@@ -134,8 +148,8 @@ the default is `$XDG_CONFIG_HOME/rex/sessions`, else `~/.config/rex/sessions`.
 `~/.local/state/rex-session-manager`.
 `--shell SHELL` (or `REX_SHELL`) is the shell each new tab starts, by path or by
 name: `jump` and `jump-mark` send it as the `shell` option of every tab in
-`session.create`. Unset, no `shell` is sent and Rex starts its own default
-shell, your login shell.
+`session.create`, and `init` writes it into the `init.lua` require line. Unset,
+no `shell` is sent and Rex starts its own default shell, your login shell.
 Errors go to stderr as `rex-session-manager: <message>` with exit status 1;
 an invalid command line is reported by clap with exit status 2.
 
@@ -238,7 +252,7 @@ A short ordered list of presets, each one chord away. One file holds them all,
 | Module | Holds |
 | --- | --- |
 | `main.rs` | CLI (clap) and dispatch. |
-| `bridge.rs` | `init-lua`: the Lua bridge (`bridge.lua`) with the binary path written in. |
+| `bridge.rs` | `init`: the Lua bridge (`bridge.lua`) with the binary path written in, and the require line it appends to `init.lua`. |
 | `preset.rs` | Preset parsing, validation, directory loading, and writing. |
 | `menu.rs` | The menus and label sanitization. |
 | `session.rs` | `jump` and the `session.create` request. |
