@@ -136,3 +136,8 @@ L16. T6 done (S6), commit bc287c1. `--shell SHELL` / `REX_SHELL` is a clap
     `mktemp -d` scratch dir showed `… --shell /opt/homebrew/bin/fish jump --
     dotfiles` with the setting and no `--shell` without it, `shell = 1` and
     `""` failing, and a non-table options failing. Live Rex not re-checked.
+L17. T6 parent check on 8ed8e5f: 34 unit + 71 CLI tests pass. Live smoke with
+    `--shell /opt/homebrew/bin/fish jump` on a temp preset: `rex capture`
+    showed `RSM_FISH=4.9.3 login=yes` (fish, login, cwd /tmp, `run` executed);
+    session killed, 0 left. Without `--shell` the earlier smoke (L13) opened
+    -zsh. Worker scratch dirs removed by the parent.
