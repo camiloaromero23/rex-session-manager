@@ -448,14 +448,16 @@ pub enum Selector {
 ///
 /// Its recorded session is used while it runs and still carries the mark's
 /// name. Otherwise this is `jump` for the name: the one session labelled with
-/// it, else a new session from its preset. A mark with neither is an error.
-/// The session found is recorded when it changed.
+/// it, else a new session from its preset, in `shell` when one is configured.
+/// A mark with neither is an error. The session found is recorded when it
+/// changed.
 pub fn jump(
     rex: &impl RexApi,
     marks: &mut Marks,
     sessions_dir: &Path,
     selector: &Selector,
     home: Option<&Path>,
+    shell: Option<&str>,
 ) -> Result<Target> {
     let index = match selector {
         Selector::Position(position) => marks.index_at(*position)?,
@@ -488,7 +490,7 @@ pub fn jump(
                     mark.name
                 );
             };
-            session::create(rex, &preset, home)?
+            session::create(rex, &preset, home, shell)?
         }
     };
     marks.marks[index].session_id = Some(target.session_id.clone());

@@ -44,6 +44,12 @@ impl Sandbox {
     /// Runs the binary against a fake `rex` that logs its argv and prints the
     /// most specific reply: per method and block, per method, then `reply`.
     fn run(&self, reply: &str, args: &[&str]) -> Output {
+        self.run_with_env(reply, args, &[])
+    }
+
+    /// Runs like `run`, with `env` set for the child. `REX_SHELL` never leaks
+    /// in from the caller's own environment: only a test that sets it sees it.
+    fn run_with_env(&self, reply: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         fs::write(self.path("reply.json"), reply).unwrap();
         let rex = self.path("rex");
         let dir = self.dir.path().display();
@@ -72,6 +78,8 @@ impl Sandbox {
             .args(args)
             .env("REX_BIN", &rex)
             .env("HOME", self.path("home"))
+            .env_remove("REX_SHELL")
+            .envs(env.iter().copied())
             .output()
             .unwrap()
     }
@@ -245,6 +253,78 @@ fn jump_creates_a_missing_session_from_the_preset() {
         home = Path::new(&home).display(),
     );
     assert_eq!(s.calls(), format!("api call session.list {{}}\n{create}\n"));
+}
+
+/// The `session.create` line for the preset `{cwd:"/d"}` and
+/// `{cwd:"/e", run:"ls"}` when every tab starts the configured shell.
+fn create_two_tabs_in_fish() -> String {
+    concat!(
+        "api call session.create ",
+        r#"{"label":"dotfiles","initial_windows":["#,
+        r#"{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"#,
+        r#""cwd":"/d","shell":"/opt/homebrew/bin/fish"}}}},"#,
+        r#"{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"#,
+        r#""cwd":"/e","initial_input":"ls\n","shell":"/opt/homebrew/bin/fish"}}}}]}"#,
+        "\n"
+    )
+    .to_owned()
+}
+
+#[test]
+fn jump_creates_the_session_in_the_shell_given_on_the_command_line() {
+    let s = Sandbox::new();
+    s.preset(
+        "d.json",
+        r#"{"name":"dotfiles","tabs":[{"cwd":"/d"},{"cwd":"/e","run":"ls"}]}"#,
+    );
+    let reply = r#"{"session_id":"session:new","initial_windows":[{"window_id":"window:first"}]}"#;
+
+    let out = s.run(
+        reply,
+        &[
+            "--shell",
+            "/opt/homebrew/bin/fish",
+            "jump",
+            "--",
+            "dotfiles",
+        ],
+    );
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"session_id\":\"session:new\",\"window_id\":\"window:first\"}\n"
+    );
+    assert_eq!(
+        s.calls(),
+        format!("api call session.list {{}}\n{}", create_two_tabs_in_fish())
+    );
+}
+
+#[test]
+fn rex_shell_sets_the_shell_like_the_option() {
+    let s = Sandbox::new();
+    s.preset(
+        "d.json",
+        r#"{"name":"dotfiles","tabs":[{"cwd":"/d"},{"cwd":"/e","run":"ls"}]}"#,
+    );
+    let reply = r#"{"session_id":"session:new","initial_windows":[{"window_id":"window:first"}]}"#;
+
+    let out = s.run_with_env(
+        reply,
+        &["jump", "--", "dotfiles"],
+        &[("REX_SHELL", "/opt/homebrew/bin/fish")],
+    );
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"session_id\":\"session:new\",\"window_id\":\"window:first\"}\n"
+    );
+    assert_eq!(
+        s.calls(),
+        format!("api call session.list {{}}\n{}", create_two_tabs_in_fish())
+    );
 }
 
 #[test]
@@ -890,6 +970,17 @@ fn invalid_command_line_exits_two() {
 }
 
 #[test]
+fn help_lists_the_shell_option() {
+    let s = Sandbox::new();
+
+    let out = s.run("{}", &["--help"]);
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(stdout(&out).contains("--shell <SHELL>"), "{}", stdout(&out));
+    assert_eq!(s.calls(), "", "help must not call rex");
+}
+
+#[test]
 fn rex_failure_is_reported_with_one_prefix() {
     let s = Sandbox::new();
     let rex = s.path("failing-rex");
@@ -1260,6 +1351,42 @@ fn jump_mark_recreates_a_closed_session_from_its_preset_and_records_it() {
             r#""cwd":"/d"}}}}]}"#,
             "\n"
         )
+    );
+}
+
+#[test]
+fn jump_mark_recreates_the_closed_session_in_the_shell_given_on_the_command_line() {
+    let s = Sandbox::new();
+    s.preset(
+        "d.json",
+        r#"{"name":"dotfiles","tabs":[{"cwd":"/d"},{"cwd":"/e","run":"ls"}]}"#,
+    );
+    s.marks(&[("dotfiles", Some("session:gone"))]);
+    let reply = r#"{"session_id":"session:new","initial_windows":[{"window_id":"window:first"}]}"#;
+
+    let out = s.run(
+        reply,
+        &[
+            "--shell",
+            "/opt/homebrew/bin/fish",
+            "jump-mark",
+            "--position",
+            "1",
+        ],
+    );
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        stdout(&out),
+        "{\"session_id\":\"session:new\",\"window_id\":\"window:first\"}\n"
+    );
+    assert_eq!(
+        s.read_marks(),
+        Some(owned(&[("dotfiles", Some("session:new"))]))
+    );
+    assert_eq!(
+        s.calls(),
+        format!("api call session.list {{}}\n{}", create_two_tabs_in_fish())
     );
 }
 
@@ -1778,10 +1905,20 @@ fn init_lua_writes_the_given_binary_path_into_the_bridge() {
         "function M.jump_mark(",
         "M.SESSIONS_PATH =",
         "M.MARKS_PATH =",
-        "function M.setup(PREFIX)",
+        "M.SHELL = nil",
+        "function M.setup(PREFIX, options)",
     ] {
         assert!(lua.contains(name), "missing {name}");
     }
+    // The shell is forwarded to the binary's own global option.
+    assert!(
+        lua.contains("if M.SHELL ~= nil then"),
+        "the bridge never forwards a shell: {lua}"
+    );
+    assert!(
+        lua.contains("\"--shell\""),
+        "the bridge never passes --shell: {lua}"
+    );
     assert!(!lua.contains("@BINARY@"), "placeholder left in the module");
     // Printing the module talks to no Rex server.
     assert_eq!(s.calls(), "");

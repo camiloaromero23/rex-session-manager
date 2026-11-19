@@ -26,8 +26,14 @@ pub struct Target {
 /// session has that label.
 ///
 /// The label match is exact and case-sensitive. Two sessions sharing the label
-/// is an error rather than a guess.
-pub fn jump(rex: &impl RexApi, presets: &Presets, project: &str) -> Result<Target> {
+/// is an error rather than a guess. `shell` is the shell a new session's tabs
+/// start; `None` leaves that to Rex.
+pub fn jump(
+    rex: &impl RexApi,
+    presets: &Presets,
+    project: &str,
+    shell: Option<&str>,
+) -> Result<Target> {
     let preset = presets
         .get(project)
         .with_context(|| format!("unknown project: {project}"))?;
@@ -38,7 +44,7 @@ pub fn jump(rex: &impl RexApi, presets: &Presets, project: &str) -> Result<Targe
             session_id: session.session_id.clone(),
             window_id: None,
         }),
-        None => create(rex, preset, std::env::home_dir().as_deref()),
+        None => create(rex, preset, std::env::home_dir().as_deref(), shell),
     }
 }
 
@@ -52,8 +58,13 @@ pub fn labelled<'a>(sessions: &'a [Session], label: &str) -> Result<Option<&'a S
 }
 
 /// Creates a session from `preset` and targets its first window.
-pub fn create(rex: &impl RexApi, preset: &Preset, home: Option<&Path>) -> Result<Target> {
-    let created = rex.create_session(&create_request(preset, home))?;
+pub fn create(
+    rex: &impl RexApi,
+    preset: &Preset,
+    home: Option<&Path>,
+    shell: Option<&str>,
+) -> Result<Target> {
+    let created = rex.create_session(&create_request(preset, home, shell))?;
     Ok(Target {
         session_id: created.session_id,
         window_id: created
@@ -65,7 +76,7 @@ pub fn create(rex: &impl RexApi, preset: &Preset, home: Option<&Path>) -> Result
 }
 
 /// The `session.create` request for a preset: one window per tab.
-fn create_request(preset: &Preset, home: Option<&Path>) -> CreateSession {
+fn create_request(preset: &Preset, home: Option<&Path>, shell: Option<&str>) -> CreateSession {
     CreateSession {
         label: preset.name.clone(),
         initial_windows: preset
@@ -75,7 +86,7 @@ fn create_request(preset: &Preset, home: Option<&Path>) -> CreateSession {
                 layout: Layout {
                     block: Block {
                         flavor: SHELL_FLAVOR,
-                        options: terminal_options(tab, home),
+                        options: terminal_options(tab, home, shell),
                     },
                 },
             })
@@ -83,13 +94,15 @@ fn create_request(preset: &Preset, home: Option<&Path>) -> CreateSession {
     }
 }
 
-/// A tab's options: `cwd` and, for a preset `run`, the text typed into the
-/// shell. No `command` or `shell`, so Rex starts its own default shell as a
-/// login shell and a `run` stays in the foreground until it exits.
-fn terminal_options(tab: &Tab, home: Option<&Path>) -> TerminalOptions {
+/// A tab's options: `cwd`, the text a preset `run` types into the shell, and
+/// the `shell` to start when one is configured. No `command`, so a `run` stays
+/// in the foreground until it exits; no `shell` leaves the choice to Rex, which
+/// starts its own default shell as a login shell.
+fn terminal_options(tab: &Tab, home: Option<&Path>, shell: Option<&str>) -> TerminalOptions {
     TerminalOptions {
         cwd: expand_home(&tab.cwd, home),
         initial_input: tab.run.as_ref().map(|run| format!("{run}\n")),
+        shell: shell.map(str::to_owned),
     }
 }
 
@@ -108,11 +121,13 @@ mod tests {
     use super::*;
     use crate::rex::{CreatedSession, CreatedWindow, Session};
 
-    /// An in-memory Rex server that records the sessions it is asked to create.
+    /// An in-memory Rex server that records the sessions it is asked to create
+    /// and each tab's options.
     #[derive(Default)]
     struct FakeRex {
         sessions: Vec<Session>,
         created: RefCell<Vec<String>>,
+        options: RefCell<Vec<serde_json::Value>>,
     }
 
     impl RexApi for FakeRex {
@@ -122,6 +137,12 @@ mod tests {
 
         fn create_session(&self, request: &CreateSession) -> Result<CreatedSession> {
             self.created.borrow_mut().push(request.label.clone());
+            self.options.borrow_mut().extend(
+                request
+                    .initial_windows
+                    .iter()
+                    .map(|window| serde_json::to_value(&window.layout.block.options).unwrap()),
+            );
             Ok(CreatedSession {
                 session_id: "session:new".into(),
                 initial_windows: vec![
@@ -174,7 +195,7 @@ mod tests {
             ..FakeRex::default()
         };
 
-        let target = jump(&rex, &presets(), "dotfiles").unwrap();
+        let target = jump(&rex, &presets(), "dotfiles", None).unwrap();
 
         assert_eq!(
             target,
@@ -190,7 +211,7 @@ mod tests {
     fn creates_a_missing_session_and_targets_its_first_window() {
         let rex = FakeRex::default();
 
-        let target = jump(&rex, &presets(), "dotfiles").unwrap();
+        let target = jump(&rex, &presets(), "dotfiles", None).unwrap();
 
         assert_eq!(
             target,
@@ -203,6 +224,18 @@ mod tests {
     }
 
     #[test]
+    fn a_new_session_forwards_the_shell_it_was_given() {
+        let rex = FakeRex::default();
+
+        jump(&rex, &presets(), "dotfiles", Some("/opt/homebrew/bin/fish")).unwrap();
+
+        assert_eq!(rex.options.borrow().len(), 2, "one set per tab");
+        for options in rex.options.borrow().iter() {
+            assert_eq!(options["shell"], "/opt/homebrew/bin/fish");
+        }
+    }
+
+    #[test]
     fn refuses_an_ambiguous_label() {
         let rex = FakeRex {
             sessions: vec![
@@ -212,7 +245,7 @@ mod tests {
             ..FakeRex::default()
         };
 
-        let error = jump(&rex, &presets(), "dotfiles").unwrap_err();
+        let error = jump(&rex, &presets(), "dotfiles", None).unwrap_err();
 
         assert_eq!(
             error.to_string(),
@@ -223,13 +256,13 @@ mod tests {
 
     #[test]
     fn refuses_an_unknown_project() {
-        let error = jump(&FakeRex::default(), &presets(), "nope").unwrap_err();
+        let error = jump(&FakeRex::default(), &presets(), "nope", None).unwrap_err();
         assert_eq!(error.to_string(), "unknown project: nope");
     }
 
     #[test]
     fn builds_one_window_per_tab_that_leaves_the_shell_to_rex() {
-        let request = create_request(&presets()["dotfiles"], Some(Path::new("/Users/me")));
+        let request = create_request(&presets()["dotfiles"], Some(Path::new("/Users/me")), None);
 
         let options: Vec<_> = request
             .initial_windows
@@ -241,6 +274,29 @@ mod tests {
             [
                 serde_json::json!({"cwd": "/Users/me/dotfiles", "initial_input": "nvim\n"}),
                 serde_json::json!({"cwd": "/tmp/with space"}),
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_one_window_per_tab_that_starts_the_given_shell() {
+        let request = create_request(
+            &presets()["dotfiles"],
+            Some(Path::new("/Users/me")),
+            Some("/opt/homebrew/bin/fish"),
+        );
+
+        let options: Vec<_> = request
+            .initial_windows
+            .iter()
+            .map(|window| serde_json::to_value(&window.layout.block.options).unwrap())
+            .collect();
+        assert_eq!(
+            options,
+            [
+                serde_json::json!({"cwd": "/Users/me/dotfiles", "initial_input": "nvim\n",
+                    "shell": "/opt/homebrew/bin/fish"}),
+                serde_json::json!({"cwd": "/tmp/with space", "shell": "/opt/homebrew/bin/fish"}),
             ]
         );
     }

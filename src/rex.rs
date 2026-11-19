@@ -123,15 +123,18 @@ pub struct Block {
 
 /// Options for the `com.superlogical.terminal.shell` block flavor.
 ///
-/// `command` and `shell` are left out on purpose: without them Rex starts the
-/// user's own default shell as a login shell, instead of a path that only
-/// exists on the author's machine.
+/// `command` is left out on purpose, so a `run` stays in the foreground until
+/// it exits. `shell` names the shell to start; left out, Rex starts the user's
+/// own default shell as a login shell.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct TerminalOptions {
     pub cwd: String,
     /// Text typed into the terminal once it starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_input: Option<String>,
+    /// The shell to start, by path or by name; left out, Rex's own default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shell: Option<String>,
 }
 
 /// Output of `session.create`.
@@ -298,6 +301,7 @@ mod tests {
                         options: TerminalOptions {
                             cwd: "/tmp".into(),
                             initial_input: None,
+                            shell: None,
                         },
                     },
                 },
@@ -315,6 +319,29 @@ mod tests {
                     }}
                 }]
             })
+        );
+    }
+
+    #[test]
+    fn terminal_options_serialize_the_shell_only_when_set() {
+        let with_shell = TerminalOptions {
+            cwd: "/tmp".into(),
+            initial_input: None,
+            shell: Some("/opt/homebrew/bin/fish".into()),
+        };
+        let without_shell = TerminalOptions {
+            cwd: "/tmp".into(),
+            initial_input: None,
+            shell: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&with_shell).unwrap(),
+            json!({"cwd": "/tmp", "shell": "/opt/homebrew/bin/fish"})
+        );
+        assert_eq!(
+            serde_json::to_value(&without_shell).unwrap(),
+            json!({"cwd": "/tmp"})
         );
     }
 

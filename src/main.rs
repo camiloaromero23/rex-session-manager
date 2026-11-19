@@ -45,6 +45,12 @@ struct Cli {
     #[arg(long, env = "REX_MARKS_DIR", global = true, value_name = "DIR")]
     marks_dir: Option<PathBuf>,
 
+    /// The shell new tabs start, by path or by name, such as
+    /// `/opt/homebrew/bin/fish` or `fish`. Sent to Rex as the `shell` option of
+    /// each tab's terminal block. Left out, Rex starts its own default shell.
+    #[arg(long, env = "REX_SHELL", global = true, value_name = "SHELL")]
+    shell: Option<String>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -185,6 +191,7 @@ fn run(cli: Cli) -> Result<()> {
         Marks::load_for_update(&directory)
     };
     let home = std::env::home_dir();
+    let shell = cli.shell.as_deref();
 
     match cli.command {
         Command::InitLua { bin } => {
@@ -209,7 +216,7 @@ fn run(cli: Cli) -> Result<()> {
         }
         Command::Jump { project } => {
             let presets = preset::load(&sessions_dir()?)?;
-            print_json(&session::jump(&rex, &presets, &project)?)
+            print_json(&session::jump(&rex, &presets, &project, shell)?)
         }
         Command::Kill { session_id } => {
             let mut marks = lock_marks()?;
@@ -271,6 +278,7 @@ fn run(cli: Cli) -> Result<()> {
                 &sessions_dir()?,
                 &selector,
                 home.as_deref(),
+                shell,
             )?)
         }
     }

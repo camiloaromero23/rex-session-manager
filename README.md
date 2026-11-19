@@ -60,6 +60,20 @@ Then load it from `init.lua` with your prefix:
 require("rex_session_manager").setup("ctrl+a")
 ```
 
+Pass the shell every new tab should start when your login shell is not the one
+you use in Rex:
+
+```lua
+require("rex_session_manager").setup("ctrl+a", { shell = "/opt/homebrew/bin/fish" })
+```
+
+`shell` is a path or a name such as `fish`, sent as the `shell` option of every
+tab in `session.create`. Left out, Rex starts its own default shell — your
+macOS login shell — as a login shell. That is not the Rex app's
+`Workspace.terminalStartupCommand` preference, which the server ignores. Calling
+`run`, `jump`, or `jump_mark` without `setup` means setting the module's own
+`M.SHELL` instead.
+
 `setup` registers the `session_manager`, `jump_project`, `mark_session`,
 `marks_menu`, and `jump_mark` actions and binds, after the prefix:
 
@@ -114,6 +128,10 @@ the default is `$XDG_CONFIG_HOME/rex/sessions`, else `~/.config/rex/sessions`.
 `--marks-dir DIR` (or `REX_MARKS_DIR`) picks the directory holding
 `marks.json`; the default is `$XDG_STATE_HOME/rex-session-manager`, else
 `~/.local/state/rex-session-manager`.
+`--shell SHELL` (or `REX_SHELL`) is the shell each new tab starts, by path or by
+name: `jump` and `jump-mark` send it as the `shell` option of every tab in
+`session.create`. Unset, no `shell` is sent and Rex starts its own default
+shell, your login shell.
 Errors go to stderr as `rex-session-manager: <message>` with exit status 1;
 an invalid command line is reported by clap with exit status 2.
 
@@ -133,8 +151,9 @@ One JSON file per project, read on every call:
 
 - `name` is required and unique across files; the file name is only for humans.
 - `tabs` is non-empty. `cwd` is required (a leading `~/` expands to `HOME`);
-  `run` is optional and is typed into the tab's shell. Each tab starts Rex's
-  own default shell, as a login shell.
+  `run` is optional and is typed into the tab's shell. Each tab starts the shell
+  set by `--shell` / `REX_SHELL` (see [Set up Rex](#set-up-rex)); unset, Rex
+  starts its own default shell, your login shell, as a login shell.
 - Unknown keys, a non-object file, and duplicate names are errors that name the
   file. Only `*.json` (any case) is read; hidden files are skipped.
 
