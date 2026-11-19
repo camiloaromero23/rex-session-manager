@@ -41,8 +41,8 @@ S6. "I do not want to open my login shell. I want to open my configured shell
 - [x] T3 (S3, S5) inline — `init-lua` subcommand, embedded module, tests, docs.
       Commit 3c67e2a.
 - [x] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
-- [ ] T6 (S6) worker — shell from the bridge setting (`--shell`); first
-      commit 5fe3cdc dropped the hardcoded fish.
+- [x] T6 (S6) worker — shell from the bridge setting (`--shell`); first
+      commit 5fe3cdc dropped the hardcoded fish, bc287c1 added the setting.
 - [ ] T5 (S4) human — `HOMEBREW_TAP_TOKEN` secret, merge, tag `v0.1.0`, verify
       `brew install` and `mise use` from the release.
 
@@ -123,3 +123,16 @@ L14. User correction after T6: "I do not want to open my login shell. I want to
 L15. Decision: "Bridge setting (Recommended)" — the shell comes from
     `setup(PREFIX, { shell = ... })`, passed as `--shell`, sent as Rex's
     `shell` option; unset leaves Rex's default.
+L16. T6 done (S6), commit bc287c1. `--shell SHELL` / `REX_SHELL` is a clap
+    global option threaded through `session::jump`, `session::create`, and
+    `marks::jump` into `TerminalOptions.shell`, which is left out when unset.
+    The bridge has `M.SHELL` (nil) and `setup(PREFIX, options)`: a non-empty
+    string sets it, a non-table options or a non-string/empty shell fails with
+    a clear message and leaves `M.SHELL` unset, and `M.run` appends `--shell`
+    before the subcommand. RED: 4 CLI tests (option exit 2, `REX_SHELL`
+    ignored, `jump-mark`, no `--shell <SHELL>` in `--help`) and the `init-lua`
+    test (no `M.SHELL`). GREEN: 34 unit + 71 CLI tests, clippy and fmt clean.
+    Generated module: `luac -p` ok; a stubbed-`rex` `lua` script in a
+    `mktemp -d` scratch dir showed `… --shell /opt/homebrew/bin/fish jump --
+    dotfiles` with the setting and no `--shell` without it, `shell = 1` and
+    `""` failing, and a non-table options failing. Live Rex not re-checked.
