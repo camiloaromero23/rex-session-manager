@@ -34,6 +34,25 @@ S6. "I do not want to open my login shell. I want to open my configured shell
     setting, no `shell` is sent and Rex picks its default (as T6's first
     commit). `cwd` and `initial_input` (`"<run>\n"`) are unchanged.
 
+S7. "Can't the `init-lua` command be `init` itself and create the file inside
+    the rex config folder?" (L21). `rex-session-manager init` writes the bridge
+    to `<config>/rex_session_manager.lua`, where `<config>` is `--config-dir
+    DIR`, else `$XDG_CONFIG_HOME/rex`, else `~/.config/rex` (created when
+    missing; symlinks followed). It overwrites an existing bridge only when its
+    first line is the generated header, else refuses naming the file, unless
+    `--force`. `--bin PATH` keeps its meaning; `--stdout` prints the bridge and
+    writes nothing. `init-lua` is removed ("Remove it", L22).
+    It then makes `<config>/init.lua` load the bridge: "Append the require line
+    if missing. Use Ctrl+a as default prefix" (L22). When no line of init.lua
+    requires `rex_session_manager` (either quote style), `init` appends
+    `require("rex_session_manager").setup("ctrl+a")`, with `--prefix KEY`
+    replacing `ctrl+a` and the global `--shell` adding `, { shell = "..." }`;
+    a missing init.lua is created with that line. An init.lua that already
+    requires it is left byte-for-byte unchanged. Prints one JSON object:
+    `{status, path, init_lua: {status, path}}`, `status` `created` /
+    `updated` / `unchanged`, `init_lua.status` `appended` / `created` /
+    `present`.
+
 ## Tasks
 
 - [x] T1 (S1) inline — repository created, `main` pushed; no commit.
@@ -45,6 +64,8 @@ S6. "I do not want to open my login shell. I want to open my configured shell
       commit 5fe3cdc dropped the hardcoded fish, bc287c1 added the setting.
 - [x] T5 (S4) human + parent — secret set by the user; `main` fast-forwarded to
       e353b23 and pushed, tag `v0.1.0` (2496e0b), release run 44434476992.
+- [ ] T7 (S7) worker — `init` writes the bridge into the Rex config and
+      loads it from init.lua; `init-lua` removed.
 
 ## Log
 
@@ -176,3 +197,8 @@ L20. Native review: lineage review-f0510c3d30fb1727 ran its 3 reviewers after
     (WARNING: the Lua `--shell` forwarding and `setup` validation are only
     checked by substring tests, tests/cli.rs:1913-1921; no committed test runs
     the module).
+L21. User: "Can't the `init-lua` command be `init` itself and create the file
+    inside the rex config folder?"
+L22. Answers: `init-lua` → "Remove it"; init.lua → "Append the require line if
+    missing. Use Ctrl+a as default prefix". Overwrite rule (generated header
+    or `--force`) and `--stdout` were proposed and not objected to.
