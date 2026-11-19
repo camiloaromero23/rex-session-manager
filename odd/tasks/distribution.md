@@ -25,6 +25,11 @@ S4. A tag `vX.Y.Z` builds macOS binaries only ("macOS only", L3:
     github:camiloaromero23/rex-session-manager`.
 S5. The README documents the Homebrew, mise, and cargo installs and the
     `init-lua` setup in place of `cargo install --path .`.
+S6. "let rex use its own default shell" (L11): a tab created by `jump` or
+    `jump-mark` no longer hardcodes `/opt/homebrew/bin/fish --login
+    --interactive` with `"shell": "none"`; the `session.create` request leaves
+    the shell to Rex's own default. A preset `run` is still typed into that
+    shell as `initial_input` (`"<run>\n"`), and `cwd` is unchanged.
 
 ## Tasks
 
@@ -33,6 +38,8 @@ S5. The README documents the Homebrew, mise, and cargo installs and the
 - [x] T3 (S3, S5) inline — `init-lua` subcommand, embedded module, tests, docs.
       Commit 3c67e2a.
 - [x] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
+- [x] T6 (S6) worker — drop the hardcoded fish shell from `session.create`.
+      Commit 5fe3cdc.
 - [ ] T5 (S4) human — `HOMEBREW_TAP_TOKEN` secret, merge, tag `v0.1.0`, verify
       `brew install` and `mise use` from the release.
 
@@ -65,3 +72,32 @@ L8. T4 evidence: `dist init` (0.34.0) ignored the `-t` flags, so targets were
     archive (binary, both licenses, README; `--version` 0.1.0) and a formula
     with `license any_of: ["MIT", "Apache-2.0"]`. Tap repository
     https://github.com/camiloaromero23/homebrew-tap created (public).
+L9. T4 independent verify (gentle-ai-verify): S4 PASS, S5 PASS. `dist generate
+    --check` exit 0 and a full regenerate is byte-identical to the committed
+    workflow; tag glob matches `v0.1.0`; matrix is macos-15 / macos-15-intel
+    only. Advisories, not applied: workflow-wide `contents: write` with
+    `pull_request` (stock dist template, PRs run only `plan`); README does not
+    say brew/mise work only from the first release; `dist` is not a declared
+    project tool.
+L10. Native review lineage `review-f0510c3d30fb1727` (commit 1894ec4, lenses
+    risk/resilience/readability) is waiting on collect: no model is configured
+    for `review-risk`, `review-resilience`, `review-readability` in the Pi
+    routing config (user action). Delivery chosen: "Fast-forward main and
+    push", held until the review resolves.
+L11. Found before release: `src/session.rs:18` hardcodes
+    `/opt/homebrew/bin/fish --login --interactive` for every tab, which breaks
+    for anyone without fish there. User: "let rex use its own default shell".
+L12. T6 evidence (S6). API, read-only: `rex api describe session.create` shows
+    a block with only `flavor` (no `options`) in its request example, and
+    `rex api call block_creator.list {}` gives the
+    `com.superlogical.terminal.shell` options schema: `shell` "Empty uses the
+    user's default shell", `command` "A program and its arguments, to run
+    instead of an interactive shell", `login` "Left out, it is true". So
+    omitting `command` and `shell` starts Rex's own default shell as a login
+    shell. No mutating API was called. RED: after the tests asked for the new
+    shape, `builds_one_window_per_tab_that_leaves_the_shell_to_rex` failed
+    (left carried `command`/`shell`) and the two CLI tests (`jump`, `jump-mark`)
+    failed on the full `session.create` argument. GREEN: 31 + 67 tests pass,
+    `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` clean.
+    `TerminalOptions` no longer has `command`/`shell`; `cwd` and
+    `initial_input` are unchanged. `src/save.rs` SHELLS detection untouched.
