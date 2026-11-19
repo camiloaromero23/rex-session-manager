@@ -25,11 +25,14 @@ S4. A tag `vX.Y.Z` builds macOS binaries only ("macOS only", L3:
     github:camiloaromero23/rex-session-manager`.
 S5. The README documents the Homebrew, mise, and cargo installs and the
     `init-lua` setup in place of `cargo install --path .`.
-S6. "let rex use its own default shell" (L11): a tab created by `jump` or
-    `jump-mark` no longer hardcodes `/opt/homebrew/bin/fish --login
-    --interactive` with `"shell": "none"`; the `session.create` request leaves
-    the shell to Rex's own default. A preset `run` is still typed into that
-    shell as `initial_input` (`"<run>\n"`), and `cwd` is unchanged.
+S6. "I do not want to open my login shell. I want to open my configured shell
+    (fish)" (L14; supersedes "let rex use its own default shell", L11). The
+    shell is a bridge setting (L15): `setup(PREFIX, { shell =
+    "/opt/homebrew/bin/fish" })` makes every binary call pass `--shell PATH`,
+    and `jump` / `jump-mark` then send it as the `shell` option of each tab's
+    `com.superlogical.terminal.shell` block in `session.create`. Without the
+    setting, no `shell` is sent and Rex picks its default (as T6's first
+    commit). `cwd` and `initial_input` (`"<run>\n"`) are unchanged.
 
 ## Tasks
 
@@ -38,8 +41,8 @@ S6. "let rex use its own default shell" (L11): a tab created by `jump` or
 - [x] T3 (S3, S5) inline — `init-lua` subcommand, embedded module, tests, docs.
       Commit 3c67e2a.
 - [x] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
-- [x] T6 (S6) worker — drop the hardcoded fish shell from `session.create`.
-      Commit 5fe3cdc.
+- [ ] T6 (S6) worker — shell from the bridge setting (`--shell`); first
+      commit 5fe3cdc dropped the hardcoded fish.
 - [ ] T5 (S4) human — `HOMEBREW_TAP_TOKEN` secret, merge, tag `v0.1.0`, verify
       `brew install` and `mise use` from the release.
 
@@ -108,3 +111,15 @@ L13. T6 parent check: 98 tests pass on 4e6528d. Live smoke against the running
     the preset cwd, with `run` typed and executed); `kill` removed it, 0
     sessions left. Consequence: the author's own tabs now open zsh, not fish,
     unless the login shell changes.
+L14. User correction after T6: "I do not want to open my login shell. I want to
+    open my configured shell (fish)". Findings: macOS login shell is /bin/zsh;
+    `$SHELL` in the user's terminals is /opt/homebrew/bin/fish; the Rex app
+    preference `Workspace.terminalStartupCommand` is
+    `/opt/homebrew/bin/fish --login --interactive` (~/.config/rex/preferences.plist)
+    and `/opt/homebrew/bin/fish -li` (`defaults read com.superlogical.rex`).
+    Server-side `session.create` ignores that client preference (smoke showed
+    -zsh). The `session.create` terminal options accept `shell` ("The shell to
+    start"). T6 reopened pending the user's choice of where the shell comes from.
+L15. Decision: "Bridge setting (Recommended)" — the shell comes from
+    `setup(PREFIX, { shell = ... })`, passed as `--shell`, sent as Rex's
+    `shell` option; unset leaves Rex's default.
