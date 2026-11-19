@@ -64,8 +64,8 @@ S7. "Can't the `init-lua` command be `init` itself and create the file inside
       commit 5fe3cdc dropped the hardcoded fish, bc287c1 added the setting.
 - [x] T5 (S4) human + parent — secret set by the user; `main` fast-forwarded to
       e353b23 and pushed, tag `v0.1.0` (2496e0b), release run 44434476992.
-- [ ] T7 (S7) worker — `init` writes the bridge into the Rex config and
-      loads it from init.lua; `init-lua` removed.
+- [x] T7 (S7) worker — `init` writes the bridge into the Rex config and
+      loads it from init.lua; `init-lua` removed. Commit c76c527.
 
 ## Log
 
@@ -202,3 +202,31 @@ L21. User: "Can't the `init-lua` command be `init` itself and create the file
 L22. Answers: `init-lua` → "Remove it"; init.lua → "Append the require line if
     missing. Use Ctrl+a as default prefix". Overwrite rule (generated header
     or `--force`) and `--stdout` were proposed and not objected to.
+L23. T7 evidence (S7), commit c76c527. RED: the 14 new `init_*` CLI tests
+    failed against the old binary (clap exit 2, "unrecognized subcommand
+    'init'", "a similar subcommand exists: 'init-lua'"). GREEN: 38 unit + 82
+    CLI tests pass (the new suite asserts exit code, exact stdout JSON, exact
+    stderr, and the written files: config-dir / `$XDG_CONFIG_HOME/rex` /
+    `~/.config/rex` resolution, `--prefix` and global `--shell` shaping the
+    require line with Lua escaping, append with and without a final newline,
+    `present` for either quote style and for `local bridge = require(...)`,
+    `created`/`updated`/`unchanged` by content with the unchanged file's inode
+    kept, old header accepted, foreign bridge refused naming the file until
+    `--force`, both files untouched on refusal, symlinked config dir and files
+    followed, `--stdout` writing nothing, relative `--bin`, and `init-lua` +
+    `init --help`). `cargo clippy --all-targets -- -D warnings` and
+    `cargo fmt --check` clean. Smoke in a `mktemp -d` with `XDG_CONFIG_HOME`
+    inside it: first `init` printed `{"status":"created","path":
+    "<tmp>/config/rex/rex_session_manager.lua","init_lua":{"status":
+    "created","path":"<tmp>/config/rex/init.lua"}}`; the second printed
+    `status` `unchanged` and `init_lua` `present`; init.lua held exactly
+    `require("rex_session_manager").setup("ctrl+a")`; the bridge passed
+    `luac -p`; the scratch dir was removed. The bridge's first line is now
+    "-- rex_session_manager.lua: the Rex side of `rex-session-manager init`."
+    and the previous one still counts as generated, so the file the author
+    already loads is replaced rather than refused. `preset.rs` now owns the
+    Rex config-root resolution (`default_config_directory`), which
+    `default_directory` reuses for `sessions/`. Risks: the released range
+    (v0.1.0 binaries) still has `init-lua`, so the next release changes the
+    user-facing setup command; `init` reads `REX_SHELL` like any global
+    option, so an exported `REX_SHELL` is written into init.lua.
