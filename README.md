@@ -27,6 +27,10 @@ With [Homebrew](https://brew.sh):
 brew install camiloaromero23/tap/rex-session-manager
 ```
 
+Homebrew 7 may refuse to read a third-party tap's formula later on (for
+example in `brew info` or `brew upgrade`) until you trust it:
+`brew trust camiloaromero23/tap`.
+
 With [mise](https://mise.jdx.dev):
 
 ```sh

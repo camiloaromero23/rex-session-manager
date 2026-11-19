@@ -43,8 +43,8 @@ S6. "I do not want to open my login shell. I want to open my configured shell
 - [x] T4 (S4, S5) inline — dist release workflow, tap repository, install docs.
 - [x] T6 (S6) worker — shell from the bridge setting (`--shell`); first
       commit 5fe3cdc dropped the hardcoded fish, bc287c1 added the setting.
-- [ ] T5 (S4) human — `HOMEBREW_TAP_TOKEN` secret, merge, tag `v0.1.0`, verify
-      `brew install` and `mise use` from the release.
+- [x] T5 (S4) human + parent — secret set by the user; `main` fast-forwarded to
+      e353b23 and pushed, tag `v0.1.0` (2496e0b), release run 44434476992.
 
 ## Log
 
@@ -141,3 +141,24 @@ L17. T6 parent check on 8ed8e5f: 34 unit + 71 CLI tests pass. Live smoke with
     showed `RSM_FISH=4.9.3 login=yes` (fish, login, cwd /tmp, `run` executed);
     session killed, 0 left. Without `--shell` the earlier smoke (L13) opened
     -zsh. Worker scratch dirs removed by the parent.
+L18. User: "Update the changes to the binary and rex config. Also i already set
+    the models for review and have available the secret with github cli".
+    Binary reinstalled with `cargo install --path .`; ~/.config/rex (dotfiles,
+    uncommitted) switched to the generated bridge with
+    `setup(PREFIX, { shell = "/opt/homebrew/bin/fish" })`, `jump_project` moved
+    out of sessions.lua, session_management.lua deleted; `rex config check` 57
+    bindings / 5 actions before and after; reloaded, `rex keymap` serves the
+    keys from rex_session_manager.lua. Native review still blocked: this Pi
+    session reports no `review-risk` model (session profile binding).
+L19. T5 evidence: run 44434476992 all 7 jobs success (annotation: formula has no
+    `test do`). Independent verify (S4, S5 PASS): release v0.1.0 Latest, not
+    draft, only the two darwin archives; aarch64 sha256 OK; binary 0.1.0 with
+    `--shell` and `init-lua`; tap Formula/rex-session-manager.rb version 0.1.0,
+    both sha256 match, license any_of MIT/Apache-2.0. Parent install checks:
+    `brew install camiloaromero23/tap/rex-session-manager` → 0.1.0, init-lua
+    writes /opt/homebrew/bin/rex-session-manager (then uninstalled);
+    `mise x github:camiloaromero23/rex-session-manager@0.1.0` → 0.1.0 (then
+    uninstalled). Advisories: mise's default minimum_release_age hides a
+    brand-new release for a while; Homebrew 7 refuses `brew info` on the
+    untrusted tap until `brew trust camiloaromero23/tap` (documented in the
+    README); binaries are ad-hoc signed, not notarized.
