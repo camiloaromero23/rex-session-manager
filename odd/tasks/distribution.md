@@ -162,3 +162,17 @@ L19. T5 evidence: run 44434476992 all 7 jobs success (annotation: formula has no
     brand-new release for a while; Homebrew 7 refuses `brew info` on the
     untrusted tap until `brew trust camiloaromero23/tap` (documented in the
     README); binaries are ad-hoc signed, not notarized.
+L20. Native review: lineage review-f0510c3d30fb1727 ran its 3 reviewers after
+    the session adopted the saved "Claude" profile, but its frozen candidate
+    (up to 1894ec4) no longer matched 3c67e2a..HEAD (binding drift, no
+    closure). User chose "Start a fresh review": lineage review-1cf1f45f87165d2b
+    over 3c67e2a..e5bc8bc (11 files, tier high), lenses risk, resilience,
+    readability, reliability on claude-sonnet-5-5. The first reliability result
+    was refused at admission (a finding without a proof reference); the
+    reoffered slot re-ran once and closed APPROVED; acknowledgement burned the
+    authority. Advisory, non-blocking follow-ups: R2-bridge-shell-doc (shell
+    documented three times in src/bridge.lua:28-33), R2-shell-duplication
+    (src/session.rs:274-300 test helper triplication), R3-bridge-shell-untested
+    (WARNING: the Lua `--shell` forwarding and `setup` validation are only
+    checked by substring tests, tests/cli.rs:1913-1921; no committed test runs
+    the module).
