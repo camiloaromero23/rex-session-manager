@@ -101,3 +101,10 @@ L12. T6 evidence (S6). API, read-only: `rex api describe session.create` shows
     `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` clean.
     `TerminalOptions` no longer has `command`/`shell`; `cwd` and
     `initial_input` are unchanged. `src/save.rs` SHELLS detection untouched.
+L13. T6 parent check: 98 tests pass on 4e6528d. Live smoke against the running
+    Rex: `jump` on a temp preset `{"cwd":"/tmp","run":"echo RSM_SMOKE_OK $0
+    $PWD"}` created the session; `rex capture` showed `RSM_SMOKE_OK -zsh /tmp`
+    (the user's login shell, UserShell /bin/zsh, started as a login shell, in
+    the preset cwd, with `run` typed and executed); `kill` removed it, 0
+    sessions left. Consequence: the author's own tabs now open zsh, not fish,
+    unless the login shell changes.
