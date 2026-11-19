@@ -230,3 +230,15 @@ L23. T7 evidence (S7), commit c76c527. RED: the 14 new `init_*` CLI tests
     (v0.1.0 binaries) still has `init-lua`, so the next release changes the
     user-facing setup command; `init` reads `REX_SHELL` like any global
     option, so an exported `REX_SHELL` is written into init.lua.
+L24. User chose "Release v0.2.0 now". `fec5bd3` restored the sessions
+    directory's own missing-home message, which T7's shared config-root
+    refactor had changed. `c9e5a03` bumped to 0.2.0; main pushed, tag
+    `v0.2.0`, run 44439590530 all 7 jobs success (formula `test do`
+    annotation again). Tap formula version 0.2.0 with both darwin urls.
+    `brew install` → 0.2.0, `init --stdout` header names `init`, BINARY
+    /opt/homebrew/bin (then uninstalled; a stale local tap clone first
+    installed 0.1.0 until `git pull` of the tap). `mise x …@0.2.0` → 0.2.0
+    (with MISE_MINIMUM_RELEASE_AGE=0; then uninstalled). Local binary
+    reinstalled at 0.2.0; real `init` → bridge `updated` (header comments only),
+    init.lua `present`; Rex reloaded, 57 bindings / 5 actions; dotfiles
+    commit 5372083.
