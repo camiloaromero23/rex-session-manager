@@ -233,18 +233,16 @@ fn jump_creates_a_missing_session_from_the_preset() {
         stdout(&out),
         "{\"session_id\":\"session:new\",\"window_id\":\"window:first\"}\n"
     );
-    let shell = r#""command":["/opt/homebrew/bin/fish","--login","--interactive"],"shell":"none""#;
     let home = s.path("home");
     let create = format!(
         concat!(
             r#"api call session.create {{"label":"dotfiles","initial_windows":["#,
             r#"{{"layout":{{"block":{{"flavor":"com.superlogical.terminal.shell","options":{{"#,
-            r#""cwd":"{home}/dotfiles",{shell},"initial_input":"nvim\n"}}}}}}}},"#,
+            r#""cwd":"{home}/dotfiles","initial_input":"nvim\n"}}}}}}}},"#,
             r#"{{"layout":{{"block":{{"flavor":"com.superlogical.terminal.shell","options":{{"#,
-            r#""cwd":"/tmp/x y",{shell}}}}}}}}}]}}"#
+            r#""cwd":"/tmp/x y"}}}}}}}}]}}"#
         ),
         home = Path::new(&home).display(),
-        shell = shell,
     );
     assert_eq!(s.calls(), format!("api call session.list {{}}\n{create}\n"));
 }
@@ -1259,7 +1257,7 @@ fn jump_mark_recreates_a_closed_session_from_its_preset_and_records_it() {
             "api call session.list {}\n",
             r#"api call session.create {"label":"dotfiles","initial_windows":["#,
             r#"{"layout":{"block":{"flavor":"com.superlogical.terminal.shell","options":{"#,
-            r#""cwd":"/d","command":["/opt/homebrew/bin/fish","--login","--interactive"],"shell":"none"}}}}]}"#,
+            r#""cwd":"/d"}}}}]}"#,
             "\n"
         )
     );

@@ -133,7 +133,8 @@ One JSON file per project, read on every call:
 
 - `name` is required and unique across files; the file name is only for humans.
 - `tabs` is non-empty. `cwd` is required (a leading `~/` expands to `HOME`);
-  `run` is optional and is typed into the tab's interactive fish.
+  `run` is optional and is typed into the tab's shell. Each tab starts Rex's
+  own default shell, as a login shell.
 - Unknown keys, a non-object file, and duplicate names are errors that name the
   file. Only `*.json` (any case) is read; hidden files are skipped.
 

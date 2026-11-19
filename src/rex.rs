@@ -122,12 +122,13 @@ pub struct Block {
 }
 
 /// Options for the `com.superlogical.terminal.shell` block flavor.
+///
+/// `command` and `shell` are left out on purpose: without them Rex starts the
+/// user's own default shell as a login shell, instead of a path that only
+/// exists on the author's machine.
 #[derive(Debug, PartialEq, Serialize)]
 pub struct TerminalOptions {
     pub cwd: String,
-    pub command: Vec<String>,
-    /// `"none"` runs `command` directly instead of through a login shell.
-    pub shell: &'static str,
     /// Text typed into the terminal once it starts.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initial_input: Option<String>,
@@ -296,8 +297,6 @@ mod tests {
                         flavor: "com.superlogical.terminal.shell",
                         options: TerminalOptions {
                             cwd: "/tmp".into(),
-                            command: vec!["/bin/fish".into()],
-                            shell: "none",
                             initial_input: None,
                         },
                     },
@@ -312,7 +311,7 @@ mod tests {
                 "initial_windows": [{
                     "layout": {"block": {
                         "flavor": "com.superlogical.terminal.shell",
-                        "options": {"cwd": "/tmp", "command": ["/bin/fish"], "shell": "none"}
+                        "options": {"cwd": "/tmp"}
                     }}
                 }]
             })

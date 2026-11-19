@@ -13,10 +13,6 @@ use crate::{
 
 const SHELL_FLAVOR: &str = "com.superlogical.terminal.shell";
 
-/// Every tab starts this interactive fish. The absolute path matters: Rex.app's
-/// `PATH` does not include Homebrew's bin directory.
-const SHELL: [&str; 3] = ["/opt/homebrew/bin/fish", "--login", "--interactive"];
-
 /// Where to go after a jump. `window_id` is set only for a newly created
 /// session, so an existing one keeps its current tab.
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -87,13 +83,12 @@ fn create_request(preset: &Preset, home: Option<&Path>) -> CreateSession {
     }
 }
 
-/// A tab with `run` types the program into the interactive shell, so it runs
-/// in the foreground and the shell returns when it exits.
+/// A tab's options: `cwd` and, for a preset `run`, the text typed into the
+/// shell. No `command` or `shell`, so Rex starts its own default shell as a
+/// login shell and a `run` stays in the foreground until it exits.
 fn terminal_options(tab: &Tab, home: Option<&Path>) -> TerminalOptions {
     TerminalOptions {
         cwd: expand_home(&tab.cwd, home),
-        command: SHELL.map(str::to_owned).to_vec(),
-        shell: "none",
         initial_input: tab.run.as_ref().map(|run| format!("{run}\n")),
     }
 }
@@ -233,19 +228,21 @@ mod tests {
     }
 
     #[test]
-    fn builds_one_fish_window_per_tab() {
+    fn builds_one_window_per_tab_that_leaves_the_shell_to_rex() {
         let request = create_request(&presets()["dotfiles"], Some(Path::new("/Users/me")));
 
         let options: Vec<_> = request
             .initial_windows
             .iter()
-            .map(|window| &window.layout.block.options)
+            .map(|window| serde_json::to_value(&window.layout.block.options).unwrap())
             .collect();
-        assert_eq!(options[0].cwd, "/Users/me/dotfiles");
-        assert_eq!(options[0].initial_input.as_deref(), Some("nvim\n"));
-        assert_eq!(options[0].command, SHELL);
-        assert_eq!(options[1].cwd, "/tmp/with space");
-        assert_eq!(options[1].initial_input, None);
+        assert_eq!(
+            options,
+            [
+                serde_json::json!({"cwd": "/Users/me/dotfiles", "initial_input": "nvim\n"}),
+                serde_json::json!({"cwd": "/tmp/with space"}),
+            ]
+        );
     }
 
     #[test]
