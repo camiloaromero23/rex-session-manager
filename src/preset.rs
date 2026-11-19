@@ -90,18 +90,24 @@ impl Preset {
 
 /// `$XDG_CONFIG_HOME/rex`, or `$HOME/.config/rex`: the Rex config directory.
 pub fn default_config_directory() -> Result<PathBuf> {
-    let config = match env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
-        Some(config) => PathBuf::from(config),
-        None => env::home_dir()
-            .context("cannot locate the home directory for the Rex config directory")?
-            .join(".config"),
-    };
-    Ok(config.join("rex"))
+    rex_config_directory("the Rex config directory")
 }
 
 /// `$XDG_CONFIG_HOME/rex/sessions`, or `$HOME/.config/rex/sessions`.
 pub fn default_directory() -> Result<PathBuf> {
-    Ok(default_config_directory()?.join("sessions"))
+    Ok(rex_config_directory("the sessions directory")?.join("sessions"))
+}
+
+/// The Rex config directory; `purpose` names what it is needed for when the
+/// home directory cannot be found.
+fn rex_config_directory(purpose: &str) -> Result<PathBuf> {
+    let config = match env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        Some(config) => PathBuf::from(config),
+        None => env::home_dir()
+            .with_context(|| format!("cannot locate the home directory for {purpose}"))?
+            .join(".config"),
+    };
+    Ok(config.join("rex"))
 }
 
 /// Loads every `*.json` preset in `directory`, in file-name order.
